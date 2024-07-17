@@ -1,17 +1,12 @@
 package xip8
 
-import "math"
-
-type DisplayMode int
-
-const (
-	standard_64x32 DisplayMode = iota
-	eti660_64x48
-	eti660_64x64
-	superChip48_128x64
+import (
+	"math"
 )
 
 // Display abstraction for a display
+// Common display sizes are 64x32 and 128x64.
+// Other uncommon sizes are 64x48 and 64x64.
 type Display interface {
 	// Clears the screen.
 	Clear()
@@ -35,28 +30,33 @@ func toScreenCoord(w, h, x, y byte) uint {
 // InMemoryDisplay stores the information of the screen in a slice
 // Useful for embedding and debugging
 type InMemoryDisplay struct {
-	W, H   byte
-	Screen []byte
+	Width, Height int
+	Screen        []byte
 }
 
+func sizeInBytesOf(w, h int) int {
+	return int(math.Ceil(float64(w*h) / 8.0))
+}
+
+// NewDefaultInMemoryDisplay creates an in-memory display of size 64x32
 func NewDefaultInMemoryDisplay() *InMemoryDisplay {
 	return NewInMemoryDisplay(64, 32)
 }
 
-func NewInMemoryDisplay(w, h byte) *InMemoryDisplay {
+func NewInMemoryDisplay(w, h int) *InMemoryDisplay {
 	return &InMemoryDisplay{
-		W:      w,
-		H:      h,
-		Screen: make([]byte, int(math.Ceil(float64(w*h)/8.0))),
+		Width:  w,
+		Height: h,
+		Screen: make([]byte, sizeInBytesOf(w, h)),
 	}
 }
 
 func (disp *InMemoryDisplay) Clear() {
-	disp.Screen = make([]byte, int(math.Ceil(float64(disp.W*disp.H)/8.0)))
+	disp.Screen = make([]byte, sizeInBytesOf(disp.Width, disp.Height))
 }
 
 func (disp *InMemoryDisplay) Display(x, y, sprite byte) bool {
-	t := toScreenCoord(byte(disp.W), byte(disp.H), x, y)
+	t := toScreenCoord(byte(disp.Width), byte(disp.Height), x, y)
 	buf := disp.Screen[t]
 	disp.Screen[t] = disp.Screen[t] ^ sprite
 
