@@ -32,26 +32,30 @@ func toScreenCoord(w, h, x, y byte) uint {
 	return uint(y)*uint(h) + uint(x)
 }
 
-// MemoryDisplay stores the information of the screen in a slice
+// InMemoryDisplay stores the information of the screen in a slice
 // Useful for embedding and debugging
-type MemoryDisplay struct {
+type InMemoryDisplay struct {
 	W, H   byte
 	Screen []byte
 }
 
-func NewMemoryDisplay(w, h byte) *MemoryDisplay {
-	return &MemoryDisplay{
+func NewDefaultInMemoryDisplay() *InMemoryDisplay {
+	return NewInMemoryDisplay(64, 32)
+}
+
+func NewInMemoryDisplay(w, h byte) *InMemoryDisplay {
+	return &InMemoryDisplay{
 		W:      w,
 		H:      h,
 		Screen: make([]byte, int(math.Ceil(float64(w*h)/8.0))),
 	}
 }
 
-func (disp *MemoryDisplay) Clear() {
+func (disp *InMemoryDisplay) Clear() {
 	disp.Screen = make([]byte, int(math.Ceil(float64(disp.W*disp.H)/8.0)))
 }
 
-func (disp *MemoryDisplay) Display(x, y, sprite byte) bool {
+func (disp *InMemoryDisplay) Display(x, y, sprite byte) bool {
 	t := toScreenCoord(byte(disp.W), byte(disp.H), x, y)
 	buf := disp.Screen[t]
 	disp.Screen[t] = disp.Screen[t] ^ sprite

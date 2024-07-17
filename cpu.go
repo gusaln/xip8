@@ -2,10 +2,12 @@ package xip8
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"time"
 )
 
+var ErrOpCodeUnknown = fmt.Errorf("unknown opcode")
 var ErrStackUnderflow = fmt.Errorf("stack underflow: try to pop an empty stack")
 var ErrStackOverflow = fmt.Errorf("stack overflow: try to push to a full stack")
 
@@ -37,9 +39,14 @@ type Cpu struct {
 
 	Display  Display
 	Keyboard Keyboard
+	Buzzer   Buzzer
+
+	Hooks []Hook
 }
 
-func NewCpu(display Display, keyboard Keyboard) *Cpu {
+type Hook func(cpu *Cpu)
+
+func NewCpu(display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
 		Memory: [4096]byte{
 			// 0
@@ -143,15 +150,43 @@ func NewCpu(display Display, keyboard Keyboard) *Cpu {
 		I:        0,
 		Dt:       0,
 		St:       0,
-		Pc:       0,
+		Pc:       startOfProgram,
 		Sp:       0,
 		Stack:    [16]uint16{},
 		Display:  display,
 		Keyboard: keyboard,
+		Buzzer:   buzzer,
+		Hooks:    make([]Hook, 0),
 	}
 }
 
-func (cpu *Cpu) LoopAtSpeed(speedInHz int) error {
+// AddAfterHook adds a hook that will after every cicle of the CPU
+func (cpu *Cpu) AddAfterHook(h Hook) int {
+	cpu.Hooks = append(cpu.Hooks, h)
+
+	return len(cpu.Hooks)
+}
+
+// RunAfterHooks runs all the hooks
+func (cpu Cpu) RunAfterHooks() {
+	for _, h := range cpu.Hooks {
+		h(&cpu)
+	}
+}
+
+func (cpu *Cpu) LoadProgram(program []byte) error {
+	if len(program) > ROM_MEMORY_SIZE-startOfProgram {
+		return errors.New("the program does not fit into memory")
+	}
+
+	for i, b := range program {
+		cpu.Memory[startOfProgram+i] = b
+	}
+
+	return nil
+}
+
+func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 	var last, timerLast time.Time
 
 	step := time.Second / time.Duration(speedInHz)
@@ -162,22 +197,27 @@ func (cpu *Cpu) LoopAtSpeed(speedInHz int) error {
 			return err
 		}
 
+		if cpu.Pc >= ROM_MEMORY_SIZE {
+			return nil
+		}
+
 		if time.Since(timerLast) > timerStep {
 			cpu.Dt = min(cpu.Dt-1, 0)
 			cpu.St = min(cpu.St-1, 0)
 			timerLast = time.Now()
 		}
 
-		if cpu.Pc*2 >= ROM_MEMORY_SIZE {
-			return nil
+		if cpu.St > 0 {
+			cpu.Buzzer.Play()
 		}
 
+		go cpu.RunAfterHooks()
 		time.Sleep(max(step-time.Since(last), 0))
 	}
 }
 
-func (cpu *Cpu) Loop() error {
-	return cpu.LoopAtSpeed(60)
+func (cpu *Cpu) Cycle() error {
+	return cpu.CycleAtSpeed(60)
 }
 
 func (cpu Cpu) IsSoundTimerActive() bool {
@@ -190,16 +230,22 @@ func (cpu Cpu) IsDelayTimerActive() bool {
 
 func (cpu *Cpu) RunNext() error {
 	var opCode uint16
-	opCode |= uint16(cpu.Memory[cpu.Pc*2+0]) << 8
-	opCode |= uint16(cpu.Memory[cpu.Pc*2+1]) << 0
+	opCode |= uint16(cpu.Memory[cpu.Pc+0]) << 8
+	opCode |= uint16(cpu.Memory[cpu.Pc+1]) << 0
+	cpu.Pc += 2
 
+	return cpu.execute(opCode)
+}
+
+func (cpu *Cpu) execute(opCode uint16) error {
 	switch opCode & 0xF000 {
 	case 0x0000:
-		if opCode == 0x00E0 {
+		switch opCode {
+		case 0x00E0:
 			// CLS :: Clear the display.
 			cpu.Display.Clear()
-			cpu.Pc++
-		} else if opCode == 0x00EE {
+
+		case 0x00EE:
 			// RET :: Return from a subroutine.
 			if cpu.Sp == 0 {
 				return ErrStackUnderflow
@@ -207,11 +253,10 @@ func (cpu *Cpu) RunNext() error {
 			cpu.Sp--
 			cpu.Pc = cpu.Stack[cpu.Sp]
 
-		} else {
+		default:
 			// SYS :: Jump to a machine code routine at nnn.
 			// Jump to a machine code routine at nnn.
 			// This instruction is only used on the old computers on which Chip-8 was originally implemented. It is ignored by modern interpreters.
-			cpu.Pc++
 		}
 
 	case 0x1000:
@@ -230,53 +275,47 @@ func (cpu *Cpu) RunNext() error {
 
 	case 0x3000:
 		// SE Vx, byte :: Skip next instruction if Vx = kk.
-		register := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
-		if cpu.V[register] == kk {
+		if cpu.V[x] == kk {
 			cpu.Pc += 2
-		} else {
-			cpu.Pc++
 		}
 
 	case 0x4000:
 		// SNE Vx, byte :: Skip next instruction if Vx != kk.
-		register := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
-		if cpu.V[register] != kk {
+		if cpu.V[x] != kk {
 			cpu.Pc += 2
-		} else {
-			cpu.Pc++
 		}
 
 	case 0x5000:
 		// SE Vx, Vy :: Skip next instruction if Vx = Vy.
-		x := opCode & 0x0100
-		y := opCode & 0x0010
+		x := (opCode & 0x0F00) >> 8
+		y := (opCode & 0x00F0) >> 4
 		if cpu.V[x] == cpu.V[y] {
 			cpu.Pc += 2
-		} else {
-			cpu.Pc++
 		}
 
 	case 0x6000:
 		// LD Vx, byte :: Set Vx = kk.
-		x := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
 		cpu.V[x] = kk
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0x7000:
 		// ADD Vx, byte :: Set Vx = Vx + kk.
-		x := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
 		cpu.V[x] = cpu.V[x] + kk
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0x8000:
 		// Inter-register operations
 
-		x := opCode & 0x0100
-		y := opCode & 0x0010
+		x := (opCode & 0x0F00) >> 8
+		y := (opCode & 0x00F0) >> 4
 
 		switch opCode & 0x000F {
 		case 0x0000:
@@ -318,25 +357,23 @@ func (cpu *Cpu) RunNext() error {
 
 		case 0x000E:
 			// SHL Vx {, Vy} :: Set Vx = Vx SHL 1.
-			cpu.V[0xF] = (cpu.V[x] & 0x40) >> 7
+			cpu.V[0xF] = (cpu.V[x] & 0x80) >> 7
 			cpu.V[x] = cpu.V[x] << 1
 		}
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0x9000:
 		// SNE Vx, Vy :: Skip next instruction if Vx != Vy.
-		x := opCode & 0x0100
-		y := opCode & 0x0010
+		x := (opCode & 0x0F00) >> 8
+		y := (opCode & 0x00F0) >> 4
 		if cpu.V[x] != cpu.V[y] {
 			cpu.Pc += 2
-		} else {
-			cpu.Pc++
 		}
 
 	case 0xA000:
 		// LD I, addr :: Set I = nnn.
 		cpu.I = opCode & 0x0FFF
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0xB000:
 		// JP V0, addr :: Jump to location nnn + V0.
@@ -344,7 +381,7 @@ func (cpu *Cpu) RunNext() error {
 
 	case 0xC000:
 		// RND Vx, byte :: Set Vx = random byte AND kk.
-		x := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
 
 		buff := [1]byte{}
@@ -354,7 +391,7 @@ func (cpu *Cpu) RunNext() error {
 		}
 
 		cpu.V[x] = buff[0] & kk
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0xD000:
 		// DRW Vx, Vy, nibble :: Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
@@ -367,11 +404,11 @@ func (cpu *Cpu) RunNext() error {
 			collision = cpu.Display.Display(x, y, cpu.Memory[cpu.I+i]) || collision
 		}
 		cpu.V[0xF] = byte(bool2int(collision))
-		cpu.Pc++
+		cpu.Pc += 2
 
 	case 0xE000:
 		// Skip if ...
-		x := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 
 		switch opCode & 0x00FF {
 		case 0x009E:
@@ -379,20 +416,20 @@ func (cpu *Cpu) RunNext() error {
 			if cpu.Keyboard.IsPressed(cpu.V[x]) {
 				cpu.Pc += 2
 			} else {
-				cpu.Pc++
+				cpu.Pc += 2
 			}
 		case 0x00A1:
 			// SKNP Vx :: Skip next instruction if key with the value of Vx is not pressed.
 			if !cpu.Keyboard.IsPressed(cpu.V[x]) {
 				cpu.Pc += 2
 			} else {
-				cpu.Pc++
+				cpu.Pc += 2
 			}
 		}
 
 	case 0xF000:
 		// other operations
-		x := opCode & 0x0100
+		x := (opCode & 0x0F00) >> 8
 
 		switch opCode & 0x00FF {
 		case 0x0007:
@@ -428,7 +465,10 @@ func (cpu *Cpu) RunNext() error {
 			}
 		}
 
-		cpu.Pc++
+		cpu.Pc += 2
+
+	default:
+		return ErrOpCodeUnknown
 	}
 
 	return nil
