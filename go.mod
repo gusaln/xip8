@@ -1,3 +1,3 @@
-module github.com/guslan/xit8
+module github.com/guslan/xip8
 
 go 1.22.5
