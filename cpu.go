@@ -14,11 +14,16 @@ var ErrStackOverflow = fmt.Errorf("stack overflow: try to push to a full stack")
 const startOfProgram = 0x200
 const startOfEtiProgram = 0x600
 
-const ROM_MEMORY_SIZE = 4096
+const MEMORY_SIZE = 4096
+
+type Hook func(cpu *Cpu)
+
+// MachineRoutineInterpreter interpretes
+type MachineRoutineInterpreter func(opCode uint16, cpu *Cpu) error
 
 // Chip-8 CPU
 type Cpu struct {
-	Memory [ROM_MEMORY_SIZE]byte
+	Memory [MEMORY_SIZE]byte
 	// V 8-bit registers
 	V [16]byte
 	// I 16-bit register (12-bit usable)
@@ -37,14 +42,14 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
-	Display  Display
-	Keyboard Keyboard
-	Buzzer   Buzzer
+	Display                   Display
+	Keyboard                  Keyboard
+	Buzzer                    Buzzer
+	MachineRoutineInterpreter MachineRoutineInterpreter
 
-	Hooks []Hook
+	// Hooks that run after every cycle
+	AfterHooks []Hook
 }
-
-type Hook func(cpu *Cpu)
 
 func NewCpu(display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
@@ -146,36 +151,39 @@ func NewCpu(display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 			0x80,
 			0x80,
 		},
-		V:        [16]byte{},
-		I:        0,
-		Dt:       0,
-		St:       0,
-		Pc:       startOfProgram,
-		Sp:       0,
-		Stack:    [16]uint16{},
+		V:     [16]byte{},
+		I:     0,
+		Dt:    0,
+		St:    0,
+		Pc:    startOfProgram,
+		Sp:    0,
+		Stack: [16]uint16{},
+
 		Display:  display,
 		Keyboard: keyboard,
 		Buzzer:   buzzer,
-		Hooks:    make([]Hook, 0),
+
+		MachineRoutineInterpreter: nil,
+		AfterHooks:                make([]Hook, 0),
 	}
 }
 
 // AddAfterHook adds a hook that will after every cicle of the CPU
 func (cpu *Cpu) AddAfterHook(h Hook) int {
-	cpu.Hooks = append(cpu.Hooks, h)
+	cpu.AfterHooks = append(cpu.AfterHooks, h)
 
-	return len(cpu.Hooks)
+	return len(cpu.AfterHooks)
 }
 
 // RunAfterHooks runs all the hooks
 func (cpu Cpu) RunAfterHooks() {
-	for _, h := range cpu.Hooks {
+	for _, h := range cpu.AfterHooks {
 		h(&cpu)
 	}
 }
 
 func (cpu *Cpu) LoadProgram(program []byte) error {
-	if len(program) > ROM_MEMORY_SIZE-startOfProgram {
+	if len(program) > MEMORY_SIZE-startOfProgram {
 		return errors.New("the program does not fit into memory")
 	}
 
@@ -197,7 +205,7 @@ func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 			return err
 		}
 
-		if cpu.Pc >= ROM_MEMORY_SIZE {
+		if cpu.Pc >= MEMORY_SIZE {
 			return nil
 		}
 
@@ -257,6 +265,9 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			// SYS :: Jump to a machine code routine at nnn.
 			// Jump to a machine code routine at nnn.
 			// This instruction is only used on the old computers on which Chip-8 was originally implemented. It is ignored by modern interpreters.
+			if cpu.MachineRoutineInterpreter != nil {
+				cpu.MachineRoutineInterpreter(opCode, cpu)
+			}
 		}
 
 	case 0x1000:
