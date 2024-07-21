@@ -7,14 +7,19 @@ import (
 	"time"
 )
 
-var ErrOpCodeUnknown = fmt.Errorf("unknown opcode")
-var ErrStackUnderflow = fmt.Errorf("stack underflow: try to pop an empty stack")
-var ErrStackOverflow = fmt.Errorf("stack overflow: try to push to a full stack")
+var ErrCpuIsNotBooted = errors.New("the CPU has not been booted properly")
 
-const startOfProgram = 0x200
-const startOfEtiProgram = 0x600
+type ErrOpCodeUnknown struct {
+	OpCode uint16
+	Pc     uint16
+}
 
-const MEMORY_SIZE = 4096
+func (err ErrOpCodeUnknown) Error() string {
+	return fmt.Sprintf("unknown opcode=%X at PC=%d", err.OpCode, err.Pc)
+}
+
+var ErrStackUnderflow = errors.New("stack underflow: try to pop an empty stack")
+var ErrStackOverflow = errors.New("stack overflow: try to push to a full stack")
 
 type Hook func(cpu *Cpu)
 
@@ -23,134 +28,39 @@ type MachineRoutineInterpreter func(opCode uint16, cpu *Cpu) error
 
 // Chip-8 CPU
 type Cpu struct {
-	Memory [MEMORY_SIZE]byte
+	Memory *Memory
 	// V 8-bit registers
 	V [16]byte
 	// I 16-bit register (12-bit usable)
 	I uint16
-
 	// Delay timer register
 	Dt byte
 	// Sound timer register
 	St byte
-
 	// Program counter
 	Pc uint16
 	// Stack pointer
 	Sp byte
-
 	// Stack
 	Stack [16]uint16
 
-	Display                   Display
-	Keyboard                  Keyboard
-	Buzzer                    Buzzer
+	Display  Display
+	Keyboard Keyboard
+	Buzzer   Buzzer
+	IsBooted bool
+
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
+	// Hooks that run before every cycle
+	BeforeHooks []Hook
 	// Hooks that run after every cycle
 	AfterHooks []Hook
 }
 
-func NewCpu(display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
+func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
-		Memory: [4096]byte{
-			// 0
-			0xF0,
-			0x90,
-			0x90,
-			0x90,
-			0xF0,
-			// 1
-			0x20,
-			0x60,
-			0x20,
-			0x20,
-			0x70,
-			// 2
-			0xF0,
-			0x10,
-			0xF0,
-			0x80,
-			0xF0,
-			// 3
-			0xF0,
-			0x10,
-			0xF0,
-			0x10,
-			0xF0,
-			// 4
-			0x90,
-			0x90,
-			0xF0,
-			0x10,
-			0x10,
-			// 5
-			0xF0,
-			0x80,
-			0xF0,
-			0x10,
-			0xF0,
-			// 6
-			0xF0,
-			0x80,
-			0xF0,
-			0x90,
-			0xF0,
-			// 7
-			0xF0,
-			0x10,
-			0x20,
-			0x40,
-			0x40,
-			// 8
-			0xF0,
-			0x90,
-			0xF0,
-			0x90,
-			0xF0,
-			// 9
-			0xF0,
-			0x90,
-			0xF0,
-			0x10,
-			0xF0,
-			// A
-			0xF0,
-			0x90,
-			0xF0,
-			0x90,
-			0x90,
-			// B
-			0xE0,
-			0x90,
-			0xE0,
-			0x90,
-			0xE0,
-			// C
-			0xF0,
-			0x80,
-			0x80,
-			0x80,
-			0xF0,
-			// D
-			0xE0,
-			0x90,
-			0x90,
-			0x90,
-			0xE0,
-			// E
-			0xF0,
-			0x80,
-			0xF0,
-			0x80,
-			0xF0,
-			// F
-			0xF0,
-			0x80,
-			0xF0,
-			0x80,
-			0x80,
-		},
+		Memory: memory,
+
 		V:     [16]byte{},
 		I:     0,
 		Dt:    0,
@@ -162,10 +72,44 @@ func NewCpu(display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 		Display:  display,
 		Keyboard: keyboard,
 		Buzzer:   buzzer,
+		IsBooted: false,
 
 		MachineRoutineInterpreter: nil,
-		AfterHooks:                make([]Hook, 0),
+
+		BeforeHooks: make([]Hook, 0),
+		AfterHooks:  make([]Hook, 0),
 	}
+}
+
+// Boot initializes all the components
+// If the CPU was already booted, this method is a noop
+func (cpu *Cpu) Boot() error {
+	if cpu.IsBooted {
+		return nil
+	}
+
+	if err := cpu.Display.Boot(); err != nil {
+		return err
+	}
+
+	if err := cpu.Keyboard.Boot(); err != nil {
+		return err
+	}
+
+	if err := cpu.Buzzer.Boot(); err != nil {
+		return err
+	}
+
+	cpu.IsBooted = true
+
+	return nil
+}
+
+// AddBeforeHook adds a hook that will before every cicle of the CPU
+func (cpu *Cpu) AddBeforeHook(h Hook) int {
+	cpu.BeforeHooks = append(cpu.BeforeHooks, h)
+
+	return len(cpu.BeforeHooks)
 }
 
 // AddAfterHook adds a hook that will after every cicle of the CPU
@@ -175,31 +119,40 @@ func (cpu *Cpu) AddAfterHook(h Hook) int {
 	return len(cpu.AfterHooks)
 }
 
+// RunBeforeHooks runs all the hooks
+func (cpu *Cpu) RunBeforeHooks() {
+	cpu.runHooks(cpu.BeforeHooks)
+}
+
 // RunAfterHooks runs all the hooks
-func (cpu Cpu) RunAfterHooks() {
-	for _, h := range cpu.AfterHooks {
-		h(&cpu)
+func (cpu *Cpu) RunAfterHooks() {
+	cpu.runHooks(cpu.AfterHooks)
+}
+
+// RunAfterHooks runs all the hooks
+func (cpu *Cpu) runHooks(hooks []Hook) {
+	for _, h := range hooks {
+		h(cpu)
 	}
 }
 
 func (cpu *Cpu) LoadProgram(program []byte) error {
-	if len(program) > MEMORY_SIZE-startOfProgram {
-		return errors.New("the program does not fit into memory")
-	}
-
-	for i, b := range program {
-		cpu.Memory[startOfProgram+i] = b
-	}
-
-	return nil
+	cpu.Pc = startOfProgram
+	return cpu.Memory.LoadProgram(program)
 }
 
 func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
+	if !cpu.IsBooted {
+		return ErrCpuIsNotBooted
+	}
+
 	var last, timerLast time.Time
 
 	step := time.Second / time.Duration(speedInHz)
 	timerStep := time.Second / time.Duration(60)
 	for {
+		cpu.RunBeforeHooks()
+
 		last = time.Now()
 		if err := cpu.RunNext(); err != nil {
 			return err
@@ -272,7 +225,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 
 	case 0x1000:
 		// JP addr :: Jump to location nnn.
-		cpu.Pc = uint16(opCode & 0x0111)
+		cpu.Pc = uint16(opCode & 0x0FFF)
 
 	case 0x2000:
 		// CALL addr :: Call subroutine at nnn.
@@ -282,7 +235,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		cpu.Stack[cpu.Sp] = cpu.Pc
 		cpu.Sp++
 
-		cpu.Pc = uint16(opCode & 0x0111)
+		cpu.Pc = uint16(opCode & 0x0FFF)
 
 	case 0x3000:
 		// SE Vx, byte :: Skip next instruction if Vx = kk.
@@ -313,14 +266,12 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
 		cpu.V[x] = kk
-		cpu.Pc += 2
 
 	case 0x7000:
 		// ADD Vx, byte :: Set Vx = Vx + kk.
 		x := (opCode & 0x0F00) >> 8
 		kk := byte(opCode & 0x00FF)
 		cpu.V[x] = cpu.V[x] + kk
-		cpu.Pc += 2
 
 	case 0x8000:
 		// Inter-register operations
@@ -348,7 +299,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		case 0x0004:
 			// ADD Vx, Vy :: Set Vx = Vx + Vy, set VF = carry.
 			r := uint16(cpu.V[x]) + uint16(cpu.V[y])
-			cpu.V[x] = byte(r & 0x0011)
+			cpu.V[x] = byte(r & 0x00FF)
 			cpu.V[0xF] = byte(r >> 8)
 
 		case 0x0005:
@@ -371,7 +322,6 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			cpu.V[0xF] = (cpu.V[x] & 0x80) >> 7
 			cpu.V[x] = cpu.V[x] << 1
 		}
-		cpu.Pc += 2
 
 	case 0x9000:
 		// SNE Vx, Vy :: Skip next instruction if Vx != Vy.
@@ -384,7 +334,6 @@ func (cpu *Cpu) execute(opCode uint16) error {
 	case 0xA000:
 		// LD I, addr :: Set I = nnn.
 		cpu.I = opCode & 0x0FFF
-		cpu.Pc += 2
 
 	case 0xB000:
 		// JP V0, addr :: Jump to location nnn + V0.
@@ -402,20 +351,20 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		}
 
 		cpu.V[x] = buff[0] & kk
-		cpu.Pc += 2
 
 	case 0xD000:
 		// DRW Vx, Vy, nibble :: Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
-		// The interpreter reads n bytes from memory, starting at the address stored in I. These bytes are then displayed as sprites on screen at coordinates (Vx, Vy). Sprites are XORed onto the existing screen. If this causes any pixels to be erased, VF is set to 1, otherwise it is set to 0. If the sprite is positioned so part of it is outside the coordinates of the display, it wraps around to the opposite side of the screen.
-		x := byte(opCode & 0x0100)
-		y := byte(opCode & 0x0010)
-		n := opCode & 0x000F
-		collision := false
-		for i := uint16(0); i <= n; i++ {
-			collision = cpu.Display.Display(x, y, cpu.Memory[cpu.I+i]) || collision
+		// The interpreter reads n bytes from memory, starting at the address stored in I. These bytes are then
+		// displayed as sprites on screen at coordinates (Vx, Vy). Sprites are XORed onto the existing screen.
+		// If this causes any pixels to be erased, VF is set to 1, otherwise it is set to 0. If the sprite is
+		// positioned so part of it is outside the coordinates of the display, it wraps around to the opposite side of
+		// the screen.
+		x := byte((opCode & 0x0F00) >> 8)
+		y := byte((opCode & 0x00F0) >> 4)
+		n := byte(opCode & 0x000F)
+		for i := byte(0); i < n; i++ {
+			cpu.V[0xF] = byte(bool2int(cpu.Display.Display(x, y+i, cpu.Memory[cpu.I+uint16(i)])))
 		}
-		cpu.V[0xF] = byte(bool2int(collision))
-		cpu.Pc += 2
 
 	case 0xE000:
 		// Skip if ...
@@ -426,14 +375,10 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			// SKP Vx :: Skip next instruction if key with the value of Vx is pressed.
 			if cpu.Keyboard.IsPressed(cpu.V[x]) {
 				cpu.Pc += 2
-			} else {
-				cpu.Pc += 2
 			}
 		case 0x00A1:
 			// SKNP Vx :: Skip next instruction if key with the value of Vx is not pressed.
 			if !cpu.Keyboard.IsPressed(cpu.V[x]) {
-				cpu.Pc += 2
-			} else {
 				cpu.Pc += 2
 			}
 		}
@@ -463,7 +408,12 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			cpu.I = uint16(cpu.V[x]) * 5
 		case 0x0033:
 			// LD B, Vx :: Store BCD representation of Vx in memory locations I, I+1, and I+2.
-			// TODO
+			top := x / 100
+			middle := (x - top) / 10
+			bottom := x - top - middle
+			cpu.Memory[cpu.I+0] = byte(top)
+			cpu.Memory[cpu.I+1] = byte(middle)
+			cpu.Memory[cpu.I+2] = byte(bottom)
 		case 0x0055:
 			// LD [I], Vx :: Store registers V0 through Vx in memory starting at location I.
 			for i := uint16(0); i <= x; i++ {
@@ -474,12 +424,18 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			for i := uint16(0); i <= x; i++ {
 				cpu.V[i] = cpu.Memory[cpu.I+i]
 			}
+		default:
+			return ErrOpCodeUnknown{
+				OpCode: opCode,
+				Pc:     cpu.Pc,
+			}
 		}
 
-		cpu.Pc += 2
-
 	default:
-		return ErrOpCodeUnknown
+		return ErrOpCodeUnknown{
+			OpCode: opCode,
+			Pc:     cpu.Pc,
+		}
 	}
 
 	return nil

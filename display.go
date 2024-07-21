@@ -8,23 +8,15 @@ import (
 // Common display sizes are 64x32 and 128x64.
 // Other uncommon sizes are 64x48 and 64x64.
 type Display interface {
+	// Boot initializes the component
+	Boot() error
 	// Clears the screen.
 	Clear()
 	// Display displays the sprite at location x, y
 	// Sprites are XORed onto the existing screen.
 	Display(x, y, sprite byte) bool
-}
-
-func toScreenCoord(w, h, x, y byte) uint {
-	if x > w-1 {
-		x = x - w
-	}
-
-	if y > h-1 {
-		y = y - h
-	}
-
-	return uint(y)*uint(h) + uint(x)
+	// Size returns the size of the screen
+	Size() int
 }
 
 // InMemoryDisplay stores the information of the screen in a slice
@@ -51,12 +43,29 @@ func NewInMemoryDisplay(w, h int) *InMemoryDisplay {
 	}
 }
 
+func (disp *InMemoryDisplay) Boot() error {
+	return nil
+}
+
 func (disp *InMemoryDisplay) Clear() {
 	disp.Screen = make([]byte, sizeInBytesOf(disp.Width, disp.Height))
 }
 
+func (disp *InMemoryDisplay) Size() int {
+	return disp.Width * disp.Height
+}
+
+func (disp InMemoryDisplay) toScreenCoord(x, y byte) uint {
+	x = x % byte(disp.Width)
+	y = y % byte(disp.Height)
+
+	return uint(y)*uint(disp.Width) + uint(x)
+}
+
 func (disp *InMemoryDisplay) Display(x, y, sprite byte) bool {
-	t := toScreenCoord(byte(disp.Width), byte(disp.Height), x, y)
+	// TODO: handle mid-byte positions
+	t := disp.toScreenCoord(x, y) / 8
+
 	buf := disp.Screen[t]
 	disp.Screen[t] = disp.Screen[t] ^ sprite
 
