@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>xip8 Debugger</title>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+
+<body class="font-mono bg-gray-300 py-6">
+    <div x-data="dashboard" class="w-11/12 mx-auto p-6 bg-white">
+        <h1 class="text-2xl mb-6">Debugger</h1>
+
+        <div class="flex justify-end space-x-4 mb-6">
+            <form action="" method="post" id="start">
+                <button class="px-4 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all ease-in-out"
+                    type="submit">Start</button>
+            </form>
+
+            <form action="" method="post" id="stop">
+                <button class="px-4 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all ease-in-out"
+                    type="submit">Stop</button>
+            </form>
+        </div>
+
+        <div class="border-2 border-gray-700 p-2">
+            <h3 class="font-medium">Instruction</h3>
+            <div class="text-lg text-green-600" x-text="instruction"></div>
+
+            <div class="flex space-x-2">
+                <div>
+                    <span class="text-gray-600">op:</span><span class="text-blue-700" x-text="instruction_op"></span>
+                </div>
+
+                <div>
+                    <span class="text-gray-600">x:</span><span class="text-blue-700" x-text="instruction_x"></span>
+                </div>
+
+                <div>
+                    <span class="text-gray-600">y:</span><span class="text-blue-700" x-text="instruction_y"></span>
+                </div>
+
+                <div>
+                    <span class="text-gray-600">nnn:</span><span class="text-blue-700" x-text="instruction_nnn"></span>
+                </div>
+
+                <div>
+                    <span class="text-gray-600">kk:</span><span class="text-blue-700" x-text="instruction_kk"></span>
+                </div>
+
+                <div>
+                    <span class="text-gray-600">n:</span><span class="text-blue-700" x-text="instruction_n"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="border-2 border-gray-700 p-2">
+            <h3 class="font-medium">PC</h3>
+            <div class="text-lg text-green-600" x-text="pc"></div>
+        </div>
+
+        <div class="border-2 border-gray-700 p-2">
+            <h3 class="font-medium">Registers</h3>
+            <div class="grid grid-cols-4 w-1/2 gap-4">
+                <template x-for="(register, index) in registers">
+                    <div>
+                        <div>V<span x-text="index"></span></div>
+                        <div class="text-lg text-green-600" x-text="register"></div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script src="sse.js"></script>
+</body>
+
+</html>
