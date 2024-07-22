@@ -44,10 +44,11 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
-	Display  Display
-	Keyboard Keyboard
-	Buzzer   Buzzer
-	IsBooted bool
+	Display        Display
+	CyclesPerFrame uint
+	Keyboard       Keyboard
+	Buzzer         Buzzer
+	IsBooted       bool
 
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
@@ -55,6 +56,8 @@ type Cpu struct {
 	BeforeHooks []Hook
 	// Hooks that run after every cycle
 	AfterHooks []Hook
+
+	renderCh chan interface{}
 }
 
 func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
@@ -69,15 +72,18 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		Sp:    0,
 		Stack: [16]uint16{},
 
-		Display:  display,
-		Keyboard: keyboard,
-		Buzzer:   buzzer,
-		IsBooted: false,
+		Display:        display,
+		Keyboard:       keyboard,
+		Buzzer:         buzzer,
+		IsBooted:       false,
+		CyclesPerFrame: 30,
 
 		MachineRoutineInterpreter: nil,
 
 		BeforeHooks: make([]Hook, 0),
 		AfterHooks:  make([]Hook, 0),
+
+		renderCh: make(chan interface{}),
 	}
 }
 
@@ -101,6 +107,15 @@ func (cpu *Cpu) Boot() error {
 	}
 
 	cpu.IsBooted = true
+
+	go func(cpu *Cpu) {
+		for {
+			select {
+			case <-cpu.renderCh:
+				cpu.Display.Render()
+			}
+		}
+	}(cpu)
 
 	return nil
 }
@@ -150,7 +165,7 @@ func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 
 	step := time.Second / time.Duration(speedInHz)
 	timerStep := time.Second / time.Duration(60)
-	for {
+	for cycles := 0; ; cycles++ {
 		cpu.RunBeforeHooks()
 
 		last = time.Now()
@@ -172,7 +187,11 @@ func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 			cpu.Buzzer.Play()
 		}
 
-		go cpu.RunAfterHooks()
+		if cycles%int(cpu.CyclesPerFrame) == 0 {
+			cpu.renderCh <- nil
+		}
+
+		cpu.RunAfterHooks()
 		time.Sleep(max(step-time.Since(last), 0))
 	}
 }
@@ -363,7 +382,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		y := byte((opCode & 0x00F0) >> 4)
 		n := byte(opCode & 0x000F)
 		for i := byte(0); i < n; i++ {
-			cpu.V[0xF] = byte(bool2int(cpu.Display.Display(x, y+i, cpu.Memory[cpu.I+uint16(i)])))
+			cpu.V[0xF] = byte(bool2int(cpu.Display.Display(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)])))
 		}
 
 	case 0xE000:
@@ -393,7 +412,12 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			cpu.V[x] = cpu.Dt
 		case 0x000A:
 			// LD Vx, K :: Wait for a key press, store the value of the key in Vx.
-			// TODO
+			k, err := cpu.Keyboard.WaitForKey()
+			if err != nil {
+				return err
+			}
+			cpu.V[x] = k
+
 		case 0x0015:
 			// LD DT, Vx :: Set delay timer = Vx.
 			cpu.Dt = cpu.V[x]

@@ -2,6 +2,7 @@ package xip8
 
 import (
 	"math"
+	"os"
 )
 
 // Display abstraction for a display
@@ -17,6 +18,8 @@ type Display interface {
 	Display(x, y, sprite byte) bool
 	// Size returns the size of the screen
 	Size() int
+	// Render
+	Render() error
 }
 
 // InMemoryDisplay stores the information of the screen in a slice
@@ -63,12 +66,107 @@ func (disp InMemoryDisplay) toScreenCoord(x, y byte) uint {
 }
 
 func (disp *InMemoryDisplay) Display(x, y, sprite byte) bool {
-	// TODO: handle mid-byte positions
-	t := disp.toScreenCoord(x, y) / 8
+	tReal := disp.toScreenCoord(x, y)
 
-	buf := disp.Screen[t]
-	disp.Screen[t] = disp.Screen[t] ^ sprite
+	if tReal%8 == 0 {
+		t := tReal / 8
+
+		buf := disp.Screen[t]
+		disp.Screen[t] = disp.Screen[t] ^ sprite
+
+		// previous & ~current
+		return (buf & (disp.Screen[t] ^ 0xFF)) > 0
+	}
+
+	tOffset := tReal % 8
+
+	t := (tReal - tOffset) / 8
+
+	firstBuf := disp.Screen[t]
+	disp.Screen[t] = disp.Screen[t] ^ byte(sprite>>byte(tOffset))
+
+	secondBuf := disp.Screen[t+1]
+	disp.Screen[t+1] = disp.Screen[t+1] ^ byte(sprite<<byte(8-tOffset))
 
 	// previous & ~current
-	return (buf & (disp.Screen[t] ^ 0xFF)) > 0
+	return ((firstBuf & (disp.Screen[t] ^ 0xFF)) > 0) || ((secondBuf & (disp.Screen[t+1] ^ 0xFF)) > 0)
+}
+
+func (disp *InMemoryDisplay) Render() error {
+	return nil
+}
+
+const ESC = 0x1B
+
+type TerminalDisplay struct {
+	OnChar, OffChar string
+
+	*InMemoryDisplay
+}
+
+func NewTerminalDisplay(w, h int) *TerminalDisplay {
+	return &TerminalDisplay{
+		OnChar:  "##",
+		OffChar: "  ",
+
+		InMemoryDisplay: NewInMemoryDisplay(w, h),
+	}
+}
+
+// NewDefaultTerminalDisplay creates an terminal display of size 64x32
+func NewDefaultTerminalDisplay() *TerminalDisplay {
+	return NewTerminalDisplay(64, 32)
+}
+
+// Boot implements Display.
+func (disp *TerminalDisplay) Boot() error {
+	os.Stdout.Write([]byte{
+		// Move cursor do start
+		ESC, '[', '1', 'H',
+		// clear the terminal
+		ESC, '[', '0', 'J',
+	})
+
+	disp.Render()
+
+	return nil
+}
+
+func (disp *TerminalDisplay) Clear() {
+	disp.InMemoryDisplay.Clear()
+
+	disp.Render()
+}
+
+func (disp *TerminalDisplay) Display(x, y, sprite byte) bool {
+	collision := disp.InMemoryDisplay.Display(x, y, sprite)
+
+	disp.Render()
+
+	return collision
+}
+
+func (disp *TerminalDisplay) Render() error {
+	buff := make([]byte, 0, disp.Size()*2+disp.Height+64)
+	buff = append(buff, ESC, '[', '1', 'H')
+	// buff = append(buff, ESC, '[', '0', 'J')
+	for i, b := range disp.Screen {
+		for bitJ := 0; bitJ < 8; bitJ++ {
+			bit := b & (1 << (7 - byte(bitJ)))
+
+			if bit > 0 {
+				buff = append(buff, disp.OnChar...)
+			} else {
+				buff = append(buff, disp.OffChar...)
+			}
+		}
+
+		if ((i+1)*8)%disp.Width == 0 {
+			buff = append(buff, '|', '\n')
+		}
+
+	}
+
+	os.Stdout.Write(buff)
+	return nil
 }
