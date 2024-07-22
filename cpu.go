@@ -21,8 +21,6 @@ func (err ErrOpCodeUnknown) Error() string {
 var ErrStackUnderflow = errors.New("stack underflow: try to pop an empty stack")
 var ErrStackOverflow = errors.New("stack overflow: try to push to a full stack")
 
-type Hook func(cpu *Cpu)
-
 // MachineRoutineInterpreter interpretes
 type MachineRoutineInterpreter func(opCode uint16, cpu *Cpu) error
 
@@ -60,6 +58,8 @@ type Cpu struct {
 	renderCh chan interface{}
 }
 
+var cyclesPerFrameDefault uint = 30
+
 func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
 		Memory: memory,
@@ -68,15 +68,15 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		I:     0,
 		Dt:    0,
 		St:    0,
-		Pc:    startOfProgram,
+		Pc:    0,
 		Sp:    0,
 		Stack: [16]uint16{},
 
 		Display:        display,
+		CyclesPerFrame: cyclesPerFrameDefault,
 		Keyboard:       keyboard,
 		Buzzer:         buzzer,
 		IsBooted:       false,
-		CyclesPerFrame: 30,
 
 		MachineRoutineInterpreter: nil,
 
@@ -109,46 +109,12 @@ func (cpu *Cpu) Boot() error {
 	cpu.IsBooted = true
 
 	go func(cpu *Cpu) {
-		for {
-			select {
-			case <-cpu.renderCh:
-				cpu.Display.Render()
-			}
+		for range cpu.renderCh {
+			cpu.Display.Render()
 		}
 	}(cpu)
 
 	return nil
-}
-
-// AddBeforeHook adds a hook that will before every cicle of the CPU
-func (cpu *Cpu) AddBeforeHook(h Hook) int {
-	cpu.BeforeHooks = append(cpu.BeforeHooks, h)
-
-	return len(cpu.BeforeHooks)
-}
-
-// AddAfterHook adds a hook that will after every cicle of the CPU
-func (cpu *Cpu) AddAfterHook(h Hook) int {
-	cpu.AfterHooks = append(cpu.AfterHooks, h)
-
-	return len(cpu.AfterHooks)
-}
-
-// RunBeforeHooks runs all the hooks
-func (cpu *Cpu) RunBeforeHooks() {
-	cpu.runHooks(cpu.BeforeHooks)
-}
-
-// RunAfterHooks runs all the hooks
-func (cpu *Cpu) RunAfterHooks() {
-	cpu.runHooks(cpu.AfterHooks)
-}
-
-// RunAfterHooks runs all the hooks
-func (cpu *Cpu) runHooks(hooks []Hook) {
-	for _, h := range hooks {
-		h(cpu)
-	}
 }
 
 func (cpu *Cpu) LoadProgram(program []byte) error {
@@ -156,7 +122,7 @@ func (cpu *Cpu) LoadProgram(program []byte) error {
 	return cpu.Memory.LoadProgram(program)
 }
 
-func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
+func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
 	if !cpu.IsBooted {
 		return ErrCpuIsNotBooted
 	}
@@ -168,13 +134,14 @@ func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 	for cycles := 0; ; cycles++ {
 		cpu.RunBeforeHooks()
 
-		last = time.Now()
-		if err := cpu.RunNext(); err != nil {
-			return err
-		}
+		for i := 0; i < int(cyclesPerFrameDefault); i++ {
+			if err := cpu.NextCycle(); err != nil {
+				return err
+			}
 
-		if cpu.Pc >= MEMORY_SIZE {
-			return nil
+			if cpu.Pc >= MEMORY_SIZE {
+				return nil
+			}
 		}
 
 		if time.Since(timerLast) > timerStep {
@@ -187,17 +154,17 @@ func (cpu *Cpu) CycleAtSpeed(speedInHz int) error {
 			cpu.Buzzer.Play()
 		}
 
-		if cycles%int(cpu.CyclesPerFrame) == 0 {
-			cpu.renderCh <- nil
-		}
+		cpu.renderCh <- nil
 
 		cpu.RunAfterHooks()
 		time.Sleep(max(step-time.Since(last), 0))
+		last = time.Now()
 	}
 }
 
-func (cpu *Cpu) Cycle() error {
-	return cpu.CycleAtSpeed(60)
+// Run starts the
+func (cpu *Cpu) Run() error {
+	return cpu.RunAtSpeed(60)
 }
 
 func (cpu Cpu) IsSoundTimerActive() bool {
@@ -208,7 +175,7 @@ func (cpu Cpu) IsDelayTimerActive() bool {
 	return cpu.Dt > 0
 }
 
-func (cpu *Cpu) RunNext() error {
+func (cpu *Cpu) NextCycle() error {
 	var opCode uint16
 	opCode |= uint16(cpu.Memory[cpu.Pc+0]) << 8
 	opCode |= uint16(cpu.Memory[cpu.Pc+1]) << 0
@@ -305,15 +272,15 @@ func (cpu *Cpu) execute(opCode uint16) error {
 
 		case 0x0001:
 			// OR Vx, Vy :: Set Vx = Vx OR Vy.
-			cpu.V[x] = cpu.V[x] | cpu.V[y]
+			cpu.V[x] |= cpu.V[y]
 
 		case 0x0002:
 			// AND Vx, Vy :: Set Vx = Vx AND Vy.
-			cpu.V[x] = cpu.V[x] & cpu.V[y]
+			cpu.V[x] &= cpu.V[y]
 
 		case 0x0003:
 			// XOR Vx, Vy :: Set Vx = Vx XOR Vy.
-			cpu.V[x] = cpu.V[x] ^ cpu.V[y]
+			cpu.V[x] ^= cpu.V[y]
 
 		case 0x0004:
 			// ADD Vx, Vy :: Set Vx = Vx + Vy, set VF = carry.
@@ -323,23 +290,27 @@ func (cpu *Cpu) execute(opCode uint16) error {
 
 		case 0x0005:
 			// SUB Vx, Vy :: Set Vx = Vx - Vy, set VF = NOT borrow.
-			cpu.V[0xF] = byte(bool2int(cpu.V[x] > cpu.V[y]))
+			carry := cpu.V[x] >= cpu.V[y]
 			cpu.V[x] = cpu.V[x] - cpu.V[y]
+			cpu.V[0xF] = bool2byte(carry)
 
 		case 0x0006:
 			// SHR Vx {, Vy} :: Set Vx = Vx SHR 1.
-			cpu.V[0xF] = cpu.V[x] & 0x01
+			carry := cpu.V[x] & 0b00000001
 			cpu.V[x] = cpu.V[x] >> 1
+			cpu.V[0xF] = carry
 
 		case 0x0007:
 			// SUBN Vx, Vy :: Set Vx = Vy - Vx, set VF = NOT borrow.
-			cpu.V[0xF] = byte(bool2int(cpu.V[y] > cpu.V[x]))
+			carry := cpu.V[y] >= cpu.V[x]
 			cpu.V[x] = cpu.V[y] - cpu.V[x]
+			cpu.V[0xF] = bool2byte(carry)
 
 		case 0x000E:
 			// SHL Vx {, Vy} :: Set Vx = Vx SHL 1.
-			cpu.V[0xF] = (cpu.V[x] & 0x80) >> 7
+			carry := (cpu.V[x] & 0b10000000) >> 7
 			cpu.V[x] = cpu.V[x] << 1
+			cpu.V[0xF] = carry
 		}
 
 	case 0x9000:
@@ -382,7 +353,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		y := byte((opCode & 0x00F0) >> 4)
 		n := byte(opCode & 0x000F)
 		for i := byte(0); i < n; i++ {
-			cpu.V[0xF] = byte(bool2int(cpu.Display.Display(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)])))
+			cpu.V[0xF] = bool2byte(cpu.Display.Display(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
 		}
 
 	case 0xE000:
@@ -465,7 +436,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 	return nil
 }
 
-func bool2int(b bool) int {
+func bool2byte(b bool) byte {
 	if b {
 		return 1
 	}

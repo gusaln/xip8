@@ -15,15 +15,13 @@ const MEMORY_SIZE = 4096
 
 type Memory [MEMORY_SIZE]byte
 
-func NewEmptyMemory() *Memory {
+func newEmptyMemory() *Memory {
 	m := Memory([MEMORY_SIZE]byte{})
 	return &m
 }
 
 func NewMemory() *Memory {
-	m := NewEmptyMemory()
-
-	loadCharactersInto(m)
+	m := newEmptyMemory()
 
 	return m
 }
@@ -66,6 +64,8 @@ func (mem Memory) IsEqual(other Memory) bool {
 }
 
 func (mem *Memory) LoadProgram(program []byte) error {
+	loadCharactersInto(mem)
+
 	if len(program) > MEMORY_SIZE-startOfProgram {
 		return ErrProgramDoesNotFitIntoMemory
 	}
