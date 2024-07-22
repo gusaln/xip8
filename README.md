@@ -4,11 +4,29 @@ CHIP-8 interpreter in go.
 
 This is a work in progress.
 
-# Instructions
+## Instructions
 
 _soon_
 
-# Tests pass
+## To do
+
+- [x] chip-8 instruction set
+- [x] hooks
+- [ ] quirks
+- [x] tui
+    - [x] display
+    - [ ] keyboard
+    - [ ] sound
+- [ ] html gui
+    - [ ] display
+    - [ ] keyboard
+    - [ ] sound
+- [ ] debugger
+    - [x] communication (needs improvements)
+    - [x] html UI (needs improvements)
+    - [ ] replay
+ 
+## Tests
 
 - [x] https://github.com/Timendus/chip8-test-suite/bin/1-chip8-logo.ch8
 - [x] https://github.com/Timendus/chip8-test-suite/bin/2-imb-logo.ch8
