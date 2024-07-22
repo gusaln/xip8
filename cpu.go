@@ -42,18 +42,27 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
+	cycles uint
+	frames uint
+
 	Display        Display
 	CyclesPerFrame uint
 	Keyboard       Keyboard
 	Buzzer         Buzzer
-	IsBooted       bool
 
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
+	isBooted bool
+	isPaused bool
+
+	// Hooks that run before every frame
+	beforeFrameHooks []Hook
 	// Hooks that run before every cycle
-	BeforeHooks []Hook
+	beforeCycleHooks []Hook
 	// Hooks that run after every cycle
-	AfterHooks []Hook
+	afterCycleHooks []Hook
+	// Hooks that run after every frame
+	afterFrameHooks []Hook
 
 	renderCh chan interface{}
 }
@@ -76,21 +85,40 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		CyclesPerFrame: cyclesPerFrameDefault,
 		Keyboard:       keyboard,
 		Buzzer:         buzzer,
-		IsBooted:       false,
 
 		MachineRoutineInterpreter: nil,
 
-		BeforeHooks: make([]Hook, 0),
-		AfterHooks:  make([]Hook, 0),
+		isBooted:         false,
+		isPaused:         false,
+		beforeFrameHooks: make([]Hook, 0),
+		beforeCycleHooks: make([]Hook, 0),
+		afterCycleHooks:  make([]Hook, 0),
+		afterFrameHooks:  make([]Hook, 0),
 
 		renderCh: make(chan interface{}),
 	}
 }
 
+func (cpu Cpu) IsSoundTimerActive() bool {
+	return cpu.St > 0
+}
+
+func (cpu Cpu) IsDelayTimerActive() bool {
+	return cpu.Dt > 0
+}
+
+func (cpu Cpu) Cycles() uint {
+	return cpu.cycles
+}
+
+func (cpu Cpu) Frames() uint {
+	return cpu.frames
+}
+
 // Boot initializes all the components
 // If the CPU was already booted, this method is a noop
 func (cpu *Cpu) Boot() error {
-	if cpu.IsBooted {
+	if cpu.isBooted {
 		return nil
 	}
 
@@ -106,7 +134,7 @@ func (cpu *Cpu) Boot() error {
 		return err
 	}
 
-	cpu.IsBooted = true
+	cpu.isBooted = true
 
 	go func(cpu *Cpu) {
 		for range cpu.renderCh {
@@ -117,13 +145,14 @@ func (cpu *Cpu) Boot() error {
 	return nil
 }
 
+// LoadProgram loads the program into memory and sets the PC to the start-of-program address
 func (cpu *Cpu) LoadProgram(program []byte) error {
 	cpu.Pc = startOfProgram
 	return cpu.Memory.LoadProgram(program)
 }
 
 func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
-	if !cpu.IsBooted {
+	if !cpu.isBooted {
 		return ErrCpuIsNotBooted
 	}
 
@@ -131,13 +160,22 @@ func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
 
 	step := time.Second / time.Duration(speedInHz)
 	timerStep := time.Second / time.Duration(60)
-	for cycles := 0; ; cycles++ {
-		cpu.RunBeforeHooks()
+	for {
+		if cpu.isPaused {
+			time.Sleep(max(step-time.Since(last), 0))
+			last = time.Now()
+			continue
+		}
 
-		for i := 0; i < int(cyclesPerFrameDefault); i++ {
+		cpu.runBeforeFrameHooks()
+
+		for i := 0; i < int(cpu.CyclesPerFrame); i++ {
+			cpu.runBeforeCycleHooks()
 			if err := cpu.NextCycle(); err != nil {
 				return err
 			}
+			cpu.cycles++
+			cpu.runAfterCycleHooks()
 
 			if cpu.Pc >= MEMORY_SIZE {
 				return nil
@@ -155,24 +193,19 @@ func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
 		}
 
 		cpu.renderCh <- nil
+		cpu.frames++
 
-		cpu.RunAfterHooks()
+		cpu.runAfterFrameHooks()
 		time.Sleep(max(step-time.Since(last), 0))
 		last = time.Now()
 	}
 }
 
-// Run starts the
+var speedInHzDefault uint = 60
+
+// Run starts the loop at 60 frames per seconds
 func (cpu *Cpu) Run() error {
-	return cpu.RunAtSpeed(60)
-}
-
-func (cpu Cpu) IsSoundTimerActive() bool {
-	return cpu.St > 0
-}
-
-func (cpu Cpu) IsDelayTimerActive() bool {
-	return cpu.Dt > 0
+	return cpu.RunAtSpeed(int(speedInHzDefault))
 }
 
 func (cpu *Cpu) NextCycle() error {

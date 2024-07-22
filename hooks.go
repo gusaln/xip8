@@ -2,31 +2,63 @@ package xip8
 
 type Hook func(cpu *Cpu)
 
-// AddBeforeHook adds a hook that will before every cicle of the CPU
-func (cpu *Cpu) AddBeforeHook(h Hook) int {
-	cpu.BeforeHooks = append(cpu.BeforeHooks, h)
-
-	return len(cpu.BeforeHooks)
+func (cpu *Cpu) Start() {
+	cpu.isPaused = false
 }
 
-// AddAfterHook adds a hook that will after every cicle of the CPU
-func (cpu *Cpu) AddAfterHook(h Hook) int {
-	cpu.AfterHooks = append(cpu.AfterHooks, h)
-
-	return len(cpu.AfterHooks)
+func (cpu *Cpu) Stop() {
+	cpu.isPaused = true
 }
 
-// RunBeforeHooks runs all the hooks
-func (cpu *Cpu) RunBeforeHooks() {
-	cpu.runHooks(cpu.BeforeHooks)
+// AddBeforeFrameHook adds a hook that will before every cicle of the CPU
+func (cpu *Cpu) AddBeforeFrameHook(h Hook) int {
+	cpu.beforeFrameHooks = append(cpu.beforeFrameHooks, h)
+
+	return len(cpu.beforeFrameHooks)
 }
 
-// RunAfterHooks runs all the hooks
-func (cpu *Cpu) RunAfterHooks() {
-	cpu.runHooks(cpu.AfterHooks)
+// AddBeforeCycleHook adds a hook that will before every cicle of the CPU
+func (cpu *Cpu) AddBeforeCycleHook(h Hook) int {
+	cpu.beforeCycleHooks = append(cpu.beforeCycleHooks, h)
+
+	return len(cpu.beforeCycleHooks)
 }
 
-// RunAfterHooks runs all the hooks
+// AddAfterCycleHook adds a hook that will after every cicle of the CPU
+func (cpu *Cpu) AddAfterCycleHook(h Hook) int {
+	cpu.afterCycleHooks = append(cpu.afterCycleHooks, h)
+
+	return len(cpu.afterCycleHooks)
+}
+
+// AddAfterFrameHook adds a hook that will after every cicle of the CPU
+func (cpu *Cpu) AddAfterFrameHook(h Hook) int {
+	cpu.afterFrameHooks = append(cpu.afterFrameHooks, h)
+
+	return len(cpu.afterFrameHooks)
+}
+
+// runBeforeFrameHooks
+func (cpu *Cpu) runBeforeFrameHooks() {
+	cpu.runHooks(cpu.beforeFrameHooks)
+}
+
+// runBeforeCycleHooks
+func (cpu *Cpu) runBeforeCycleHooks() {
+	cpu.runHooks(cpu.beforeCycleHooks)
+}
+
+// runAfterCycleHooks
+func (cpu *Cpu) runAfterCycleHooks() {
+	cpu.runHooks(cpu.afterCycleHooks)
+}
+
+// runAfterFrameHooks
+func (cpu *Cpu) runAfterFrameHooks() {
+	cpu.runHooks(cpu.afterFrameHooks)
+}
+
+// runHooks executes the given set of hooks
 func (cpu *Cpu) runHooks(hooks []Hook) {
 	for _, h := range hooks {
 		h(cpu)
