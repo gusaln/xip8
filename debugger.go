@@ -2,8 +2,10 @@ package xip8
 
 import (
 	"fmt"
+	"log"
 	"net/http"
-	"strings"
+
+	"github.com/gorilla/websocket"
 )
 
 type HttpDebugger struct {
@@ -37,26 +39,32 @@ func NewHttpDebugger(cpu *Cpu) *HttpDebugger {
 	return &deb
 }
 
+var upgrader = websocket.Upgrader{} // use default options
+
 func (d *HttpDebugger) Listen(port int) error {
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
-	http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
+	http.HandleFunc("/debugger", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Print("upgrade:", err)
+			return
+		}
+		defer conn.Close()
+		for {
+			running := true
+			for running {
+				select {
+				case cpu := <-d.send:
+					err = conn.WriteMessage(websocket.BinaryMessage, d.formatAsEvent(cpu))
+					if err != nil {
+						log.Fatalln("error write:", err)
+						running = false
+					}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		running := true
-		for running {
-			select {
-			case cpu := <-d.send:
-				fmt.Fprintf(w, "data: %s\n\n", d.formatAsEvent(cpu))
-				w.(http.Flusher).Flush()
-
-			case <-r.Context().Done():
-				running = false
+				case <-r.Context().Done():
+					running = false
+				}
 			}
 		}
 	})
@@ -97,21 +105,26 @@ func (d *HttpDebugger) afterCycle(cpu *Cpu) {
 func (d *HttpDebugger) afterFrame(cpu *Cpu) {
 }
 
-func (d HttpDebugger) formatAsEvent(cpu Cpu) string {
-	sb := strings.Builder{}
+func (d HttpDebugger) formatAsEvent(cpu Cpu) []byte {
+	buf := make([]byte, 0, 64)
 
-	sb.WriteRune(rune(d.CurrentOpCode))
-	sb.WriteRune(rune(cpu.Pc))
+	buf = append(buf, byte((d.CurrentOpCode&0xFF00)>>8))
+	buf = append(buf, byte((d.CurrentOpCode&0x00FF)>>0))
+
+	buf = append(buf, byte((cpu.Pc&0xFF00)>>8))
+	buf = append(buf, byte((cpu.Pc&0x00FF)>>0))
 	for _, b := range cpu.V {
-		sb.WriteByte(b)
+		buf = append(buf, b)
 	}
-	sb.WriteRune(rune(cpu.I))
-	sb.WriteByte(byte(cpu.Sp))
+	buf = append(buf, byte((cpu.I&0xFF00)>>8))
+	buf = append(buf, byte((cpu.I&0x00FF)>>0))
+	buf = append(buf, cpu.Sp)
 	for _, b := range cpu.Stack {
-		sb.WriteRune(rune(b))
+		buf = append(buf, byte((b&0xFF00)>>8))
+		buf = append(buf, byte((b&0x00FF)>>0))
 	}
-	sb.WriteByte(cpu.Dt)
-	sb.WriteByte(cpu.St)
+	buf = append(buf, cpu.Dt)
+	buf = append(buf, cpu.St)
 
-	return sb.String()
+	return buf
 }

@@ -58,9 +58,16 @@
             </div>
         </div>
 
-        <div class="border-2 border-gray-700 p-2">
-            <h3 class="font-medium">PC</h3>
-            <div class="text-lg text-green-600" x-text="pc"></div>
+        <div class="border-2 border-gray-700 p-2 grid grid-cols-2 gap-4">
+            <div>
+                <h3 class="font-medium">PC</h3>
+                <div class="text-lg text-green-600" x-text="pc"></div>    
+            </div>
+
+            <div>
+                <h3 class="font-medium">I</h3>
+                <div class="text-lg text-green-600" x-text="i"></div>    
+            </div>
         </div>
 
         <div class="border-2 border-gray-700 p-2">
@@ -69,14 +76,14 @@
                 <template x-for="(register, index) in registers">
                     <div>
                         <div>V<span x-text="index"></span></div>
-                        <div class="text-lg text-green-600" x-text="register"></div>
+                        <div class="flex justifi-end w-full text-lg text-green-600" x-text="register"></div>
                     </div>
                 </template>
             </div>
         </div>
     </div>
 
-    <script src="sse.js"></script>
+    <script src="debugger.js"></script>
 </body>
 
 </html>

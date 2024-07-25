@@ -52,7 +52,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	if err := cpu.RunAtSpeed(30); err != nil {
+	if err := cpu.RunAtSpeed(1); err != nil {
 		log.Fatalln(err)
 	}
 }

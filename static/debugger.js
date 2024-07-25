@@ -1,3 +1,5 @@
+const url = "localhost:9999";
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("dashboard", () => ({
     source: null,
@@ -22,69 +24,49 @@ document.addEventListener("alpine:init", () => {
     init() {
       const component = this;
 
-      this.source = new EventSource("http://localhost:9999/events");
-      this.source.addEventListener("message", function (event) {
-        /** @type {string} msg */
+      const source = new WebSocket("ws://" + url + "/debugger");
+      source.binaryType = "arraybuffer";
+      source.addEventListener("message", function (event) {
+        /** @type {ArrayBuffer} msg */
         const msg = event.data;
 
-        component.instruction = msg.charCodeAt(0).toString(16);
-        component.instruction_op = msg.charCodeAt(0) & 0xf000;
-        component.instruction_x = (msg.charCodeAt(0) & 0x0f00) >> 8;
-        component.instruction_y = (msg.charCodeAt(0) & 0x00f0) >> 4;
-        component.instruction_nnn = (msg.charCodeAt(0) & 0x0fff) >> 0;
-        component.instruction_kk = (msg.charCodeAt(0) & 0x00ff) >> 0;
-        component.instruction_n = (msg.charCodeAt(0) & 0x000f) >> 0;
+        const view = new DataView(msg);
 
-        component.pc = msg.charCodeAt(1);
+        const instruction = view.getUint16(0);
+
+        component.instruction = instruction.toString(16);
+        component.instruction_op = instruction & 0xf000;
+        component.instruction_x = (instruction & 0x0f00) >> 8;
+        component.instruction_y = (instruction & 0x00f0) >> 4;
+        component.instruction_nnn = (instruction & 0x0fff) >> 0;
+        component.instruction_kk = (instruction & 0x00ff) >> 0;
+        component.instruction_n = (instruction & 0x000f) >> 0;
+
+        component.pc = view.getUint16(2);
         component.registers = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        component.i = msg.charCodeAt(18);
-        component.stackPointer = msg.charCodeAt(19);
+        component.i = view.getUint16(20);
+        component.stackPointer = view.getUint8(22);
         component.stack = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         component.delay = msg.charCodeAt(36);
         component.timer = msg.charCodeAt(37);
 
         for (let i = 0; i < 16; i++) {
-          component.registers[i] = msg.charCodeAt(2 + i).toString(16);
-          component.stack[i] = msg.charCodeAt(20 + i);
+          component.registers[i] = view.getUint8(4 + i).toString(16);
+          component.stack[i] = view.getInt16(23 + i * 2);
         }
 
-        console.log(msg.length, cpu);
+        console.log(msg.length, component);
       });
+
+      this.source = source;
     },
   }));
-});
-
-const container = document.getElementById("sse-data");
-const eventSource = new EventSource("http://localhost:9999/events");
-eventSource.addEventListener("message", function (event) {
-  /** @type {string} msg */
-  const msg = event.data;
-
-  const cpu = {
-    instruction: msg.charCodeAt(0).toString(16),
-    pc: msg.charCodeAt(1),
-    registers: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    i: msg.charCodeAt(18),
-    stackPointer: msg.charCodeAt(19),
-    stack: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    delay: msg.charCodeAt(36),
-    timer: msg.charCodeAt(37),
-  };
-
-  for (let i = 0; i < 16; i++) {
-    cpu.registers[i] = msg.charCodeAt(2 + i).toString(16);
-    cpu.stack[i] = msg.charCodeAt(20 + i);
-  }
-
-  console.log(msg.length, cpu);
-
-  container.innerText = JSON.stringify(cpu, null, 2);
 });
 
 document.getElementById("start").addEventListener("submit", (event) => {
   event.preventDefault();
 
-  fetch("http://localhost:9999/start", {
+  fetch("http://" + url + "/start", {
     method: "post",
   }).then((res) => console.log(res));
 });
@@ -92,7 +74,7 @@ document.getElementById("start").addEventListener("submit", (event) => {
 document.getElementById("stop").addEventListener("submit", (event) => {
   event.preventDefault();
 
-  fetch("http://localhost:9999/stop", {
+  fetch("http://" + url + "/stop", {
     method: "post",
   }).then((res) => console.log(res));
 });
