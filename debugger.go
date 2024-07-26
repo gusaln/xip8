@@ -84,6 +84,24 @@ func (d *HttpDebugger) Listen(port int) error {
 
 		d.Cpu.Stop()
 	})
+	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
+
+		w.Header().Set("Cache-Control", "no-cache")
+
+		d.Cpu.Stop()
+		d.Cpu.Reset()
+	})
+	http.HandleFunc("/step", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
+
+		w.Header().Set("Cache-Control", "no-cache")
+
+		d.Cpu.SingleFrame()
+		d.send <- *d.Cpu
+	})
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }

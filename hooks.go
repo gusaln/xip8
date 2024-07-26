@@ -38,6 +38,13 @@ func (cpu *Cpu) AddAfterFrameHook(h Hook) int {
 	return len(cpu.afterFrameHooks)
 }
 
+// AddErrorHook adds a hook that will after every cicle of the CPU
+func (cpu *Cpu) AddErrorHook(h Hook) int {
+	cpu.errorHooks = append(cpu.errorHooks, h)
+
+	return len(cpu.errorHooks)
+}
+
 // runBeforeFrameHooks
 func (cpu *Cpu) runBeforeFrameHooks() {
 	cpu.runHooks(cpu.beforeFrameHooks)
@@ -56,6 +63,11 @@ func (cpu *Cpu) runAfterCycleHooks() {
 // runAfterFrameHooks
 func (cpu *Cpu) runAfterFrameHooks() {
 	cpu.runHooks(cpu.afterFrameHooks)
+}
+
+// runErrorHooks
+func (cpu *Cpu) runErrorHooks() {
+	cpu.runHooks(cpu.errorHooks)
 }
 
 // runHooks executes the given set of hooks

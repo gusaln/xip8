@@ -42,8 +42,10 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
-	cycles uint
-	frames uint
+	speedInHz  uint
+	timerEvery uint
+	cycles     uint
+	frames     uint
 
 	Display        Display
 	CyclesPerFrame uint
@@ -52,8 +54,9 @@ type Cpu struct {
 
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
-	isBooted bool
-	isPaused bool
+	isBooted  bool
+	isPaused  bool
+	lastError error
 
 	// Hooks that run before every frame
 	beforeFrameHooks []Hook
@@ -63,10 +66,13 @@ type Cpu struct {
 	afterCycleHooks []Hook
 	// Hooks that run after every frame
 	afterFrameHooks []Hook
+	// Hooks that run after an error
+	errorHooks []Hook
 
 	renderCh chan interface{}
 }
 
+var speedInHzDefault uint = 30
 var cyclesPerFrameDefault uint = 30
 
 func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
@@ -81,6 +87,8 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		Sp:    0,
 		Stack: [16]uint16{},
 
+		speedInHz: speedInHzDefault,
+
 		Display:        display,
 		CyclesPerFrame: cyclesPerFrameDefault,
 		Keyboard:       keyboard,
@@ -88,12 +96,15 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 
 		MachineRoutineInterpreter: nil,
 
-		isBooted:         false,
-		isPaused:         false,
+		isBooted:  false,
+		isPaused:  false,
+		lastError: nil,
+
 		beforeFrameHooks: make([]Hook, 0),
 		beforeCycleHooks: make([]Hook, 0),
 		afterCycleHooks:  make([]Hook, 0),
 		afterFrameHooks:  make([]Hook, 0),
+		errorHooks:       make([]Hook, 0),
 
 		renderCh: make(chan interface{}),
 	}
@@ -105,6 +116,14 @@ func (cpu Cpu) IsSoundTimerActive() bool {
 
 func (cpu Cpu) IsDelayTimerActive() bool {
 	return cpu.Dt > 0
+}
+
+func (cpu Cpu) SpeedInHz() uint {
+	return cpu.speedInHz
+}
+
+func (cpu *Cpu) SetSpeedInHz(inHz uint) {
+	cpu.speedInHz = inHz
 }
 
 func (cpu Cpu) Cycles() uint {
@@ -147,19 +166,39 @@ func (cpu *Cpu) Boot() error {
 
 // LoadProgram loads the program into memory and sets the PC to the start-of-program address
 func (cpu *Cpu) LoadProgram(program []byte) error {
-	cpu.Pc = startOfProgram
+	cpu.Reset()
 	return cpu.Memory.LoadProgram(program)
 }
 
-func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
+func (cpu *Cpu) Reset() {
+	cpu.Pc = startOfProgram
+	cpu.frames = 0
+	cpu.cycles = 0
+	cpu.lastError = nil
+
+	cpu.Display.Clear()
+}
+
+// Loop sets the speed an starts the loop
+func (cpu *Cpu) LoopAtSpeed(speedInHz uint) error {
+	cpu.SetSpeedInHz(speedInHz)
+	return cpu.Loop()
+}
+
+// Loop starts the loop at the current speed
+func (cpu *Cpu) Loop() error {
 	if !cpu.isBooted {
 		return ErrCpuIsNotBooted
 	}
 
-	var last, timerLast time.Time
+	if cpu.lastError != nil {
+		return cpu.lastError
+	}
 
-	step := time.Second / time.Duration(speedInHz)
-	timerStep := time.Second / time.Duration(60)
+	var last time.Time
+
+	step := time.Second / time.Duration(cpu.speedInHz)
+	// timerStep := time.Second / time.Duration(60)
 	for {
 		if cpu.isPaused {
 			time.Sleep(max(step-time.Since(last), 0))
@@ -167,48 +206,67 @@ func (cpu *Cpu) RunAtSpeed(speedInHz int) error {
 			continue
 		}
 
-		cpu.runBeforeFrameHooks()
-
-		for i := 0; i < int(cpu.CyclesPerFrame); i++ {
-			cpu.runBeforeCycleHooks()
-			if err := cpu.NextCycle(); err != nil {
-				return err
-			}
-			cpu.cycles++
-			cpu.runAfterCycleHooks()
-
-			if cpu.Pc >= MEMORY_SIZE {
-				return nil
-			}
+		if done, err := cpu.nextFrame(); err != nil {
+			return err
+		} else if done {
+			return nil
 		}
 
-		if time.Since(timerLast) > timerStep {
-			cpu.Dt = min(cpu.Dt-1, 0)
-			cpu.St = min(cpu.St-1, 0)
-			timerLast = time.Now()
-		}
-
-		if cpu.St > 0 {
-			cpu.Buzzer.Play()
-		}
-
-		cpu.renderCh <- nil
-		cpu.frames++
-
-		cpu.runAfterFrameHooks()
 		time.Sleep(max(step-time.Since(last), 0))
 		last = time.Now()
 	}
 }
 
-var speedInHzDefault uint = 60
+func (cpu *Cpu) SingleFrame() error {
+	if !cpu.isBooted {
+		return ErrCpuIsNotBooted
+	}
 
-// Run starts the loop at 60 frames per seconds
-func (cpu *Cpu) Run() error {
-	return cpu.RunAtSpeed(int(speedInHzDefault))
+	if cpu.lastError != nil {
+		return cpu.lastError
+	}
+
+	if _, err := cpu.nextFrame(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (cpu *Cpu) NextCycle() error {
+func (cpu *Cpu) nextFrame() (bool, error) {
+	cpu.runBeforeFrameHooks()
+
+	for i := 0; i < int(cpu.CyclesPerFrame); i++ {
+		cpu.runBeforeCycleHooks()
+		if err := cpu.nextCycle(); err != nil {
+			cpu.runErrorHooks()
+			cpu.lastError = err
+			return false, err
+		}
+		cpu.cycles++
+		cpu.runAfterCycleHooks()
+
+		if cpu.Pc >= MEMORY_SIZE {
+			return true, nil
+		}
+	}
+
+	cpu.Dt = min(cpu.Dt-1, 0)
+	cpu.St = min(cpu.St-1, 0)
+
+	if cpu.St > 0 {
+		cpu.Buzzer.Play()
+	}
+
+	cpu.renderCh <- nil
+	cpu.frames++
+
+	cpu.runAfterFrameHooks()
+
+	return false, nil
+}
+
+func (cpu *Cpu) nextCycle() error {
 	var opCode uint16
 	opCode |= uint16(cpu.Memory[cpu.Pc+0]) << 8
 	opCode |= uint16(cpu.Memory[cpu.Pc+1]) << 0
