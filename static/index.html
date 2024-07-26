@@ -25,62 +25,113 @@
                 <button class="px-4 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all ease-in-out"
                     type="submit">Stop</button>
             </form>
+
+            <form action="" method="post" id="step">
+                <button class="px-4 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all ease-in-out"
+                    type="submit">Step</button>
+            </form>
+
+            <form action="" method="post" id="reset">
+                <button class="px-4 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all ease-in-out"
+                    type="submit">Reset</button>
+            </form>
         </div>
 
-        <div class="border-2 border-gray-700 p-2">
-            <h3 class="font-medium">Instruction</h3>
-            <div class="text-lg text-green-600" x-text="instruction"></div>
+        <main class="grid grid-cols-4">
+            <section class="col-span-2">
 
-            <div class="flex space-x-2">
-                <div>
-                    <span class="text-gray-600">op:</span><span class="text-blue-700" x-text="instruction_op"></span>
-                </div>
+            </section>
 
-                <div>
-                    <span class="text-gray-600">x:</span><span class="text-blue-700" x-text="instruction_x"></span>
-                </div>
+            <section class="border-2 border-gray-700">
+                <div class="p-4">
+                    <h3 class="text-sm font-medium">Instruction</h3>
+                    <div class="text-lg text-green-600" x-text="instruction"></div>
 
-                <div>
-                    <span class="text-gray-600">y:</span><span class="text-blue-700" x-text="instruction_y"></span>
-                </div>
+                    <div class="flex justify-end space-x-2">
+                        <div>
+                            <span class="text-gray-600">op:</span><span class="text-blue-700"
+                                x-text="instruction_op"></span>
+                        </div>
 
-                <div>
-                    <span class="text-gray-600">nnn:</span><span class="text-blue-700" x-text="instruction_nnn"></span>
-                </div>
+                        <div>
+                            <span class="text-gray-600">x:</span><span class="text-blue-700"
+                                x-text="instruction_x"></span>
+                        </div>
 
-                <div>
-                    <span class="text-gray-600">kk:</span><span class="text-blue-700" x-text="instruction_kk"></span>
-                </div>
-
-                <div>
-                    <span class="text-gray-600">n:</span><span class="text-blue-700" x-text="instruction_n"></span>
-                </div>
-            </div>
-        </div>
-
-        <div class="border-2 border-gray-700 p-2 grid grid-cols-2 gap-4">
-            <div>
-                <h3 class="font-medium">PC</h3>
-                <div class="text-lg text-green-600" x-text="pc"></div>    
-            </div>
-
-            <div>
-                <h3 class="font-medium">I</h3>
-                <div class="text-lg text-green-600" x-text="i"></div>    
-            </div>
-        </div>
-
-        <div class="border-2 border-gray-700 p-2">
-            <h3 class="font-medium">Registers</h3>
-            <div class="grid grid-cols-4 w-1/2 gap-4">
-                <template x-for="(register, index) in registers">
-                    <div>
-                        <div>V<span x-text="index"></span></div>
-                        <div class="flex justifi-end w-full text-lg text-green-600" x-text="register"></div>
+                        <div>
+                            <span class="text-gray-600">y:</span><span class="text-blue-700"
+                                x-text="instruction_y"></span>
+                        </div>
                     </div>
-                </template>
-            </div>
-        </div>
+                    <div class="flex justify-end space-x-2">
+                        <div>
+                            <span class="text-gray-600">nnn:</span><span class="text-blue-700"
+                                x-text="instruction_nnn"></span>
+                        </div>
+
+                        <div>
+                            <span class="text-gray-600">kk:</span><span class="text-blue-700"
+                                x-text="instruction_kk"></span>
+                        </div>
+
+                        <div>
+                            <span class="text-gray-600">n:</span><span class="text-blue-700"
+                                x-text="instruction_n"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2">
+                    <div class="p-4">
+                        <h3 class="text-sm font-medium">PC</h3>
+                        <div class="text-lg text-green-600 flex justify-end">
+                            <div x-text="pc"></div>
+                        </div>
+                    </div>
+
+                    <div class="p-4">
+                        <h3 class="text-sm font-medium">I</h3>
+                        <div class="text-lg text-green-600 flex justify-end">
+                            <div x-text="i"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3">
+                    <div class="p-4">
+                        <h3 class="text-sm font-medium">Stack P</h3>
+                        <div class="text-lg text-green-600 flex justify-end">
+                            <div x-text="stackPointer"></div>
+                        </div>
+                    </div>
+
+                    <div class="p-4">
+                        <h3 class="text-sm font-medium">Delay</h3>
+                        <div class="text-lg text-green-600 flex justify-end">
+                            <div x-text="delay"></div>
+                        </div>
+                    </div>
+
+                    <div class="p-4">
+                        <h3 class="text-sm font-medium">Timer</h3>
+                        <div class="text-lg text-green-600 flex justify-end">
+                            <div x-text="timer"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-4">
+                    <template x-for="(register, index) in registers">
+                        <div class="px-4 py-2">
+                            <div class="text-sm font-medium">V<span x-text="index"></span></div>
+                            <div class="flex justify-end w-full text-lg text-green-600">
+                                <div x-text="register"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+        </main>
     </div>
 
     <script src="debugger.js"></script>

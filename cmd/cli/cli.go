@@ -13,8 +13,9 @@ import (
 )
 
 func main() {
-	portPtr := flag.Int("port", 9999, "specify the port of the debugger")
 	noTermPtr := flag.Bool("noterm", false, "turn off the terminal display of the emulator")
+	debugPtr := flag.Bool("debug", false, "turn on the debugger for the emulator")
+	portPtr := flag.Int("port", 9999, "specify the port of the debugger")
 
 	flag.Parse()
 
@@ -29,20 +30,24 @@ func main() {
 	}
 
 	cpu := xip8.NewCpu(mem, d, kb, b)
-	if len(os.Args) < 2 {
+	if flag.NArg() < 1 {
 		log.Fatalln("must provide the path to a rom as an argument")
 	}
 
-	deb := xip8.NewHttpDebugger(cpu)
-	go func(deb *xip8.HttpDebugger, port int) {
-		log.Println("server listening on port ", port)
+	var speed uint = 30
+	if *debugPtr {
+		speed = 1
+		deb := xip8.NewHttpDebugger(cpu)
+		go func(deb *xip8.HttpDebugger, port int) {
+			log.Println("server listening on port ", port)
 
-		if err := deb.Listen(port); err != nil {
-			log.Fatalln(err)
-		}
-	}(deb, *portPtr)
+			if err := deb.Listen(port); err != nil {
+				log.Fatalln(err)
+			}
+		}(deb, *portPtr)
+	}
 
-	program, err := os.ReadFile(os.Args[1])
+	program, err := os.ReadFile(flag.Arg(0))
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -52,7 +57,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	if err := cpu.RunAtSpeed(1); err != nil {
+	if err := cpu.LoopAtSpeed(speed); err != nil {
 		log.Fatalln(err)
 	}
 }
