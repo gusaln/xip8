@@ -7,7 +7,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="./index.css" rel="stylesheet">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 
@@ -37,11 +37,7 @@
             </form>
         </div>
 
-        <main class="grid grid-cols-4">
-            <section class="col-span-2">
-
-            </section>
-
+        <main class="grid gap-1 grid-cols-6">
             <section class="border-2 border-gray-700">
                 <div class="p-4">
                     <h3 class="text-sm font-medium">Instruction</h3>
@@ -81,7 +77,7 @@
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2">
+                <div class="grid gap-4 grid-cols-2">
                     <div class="p-4">
                         <h3 class="text-sm font-medium">PC</h3>
                         <div class="text-lg text-green-600 flex justify-end">
@@ -97,7 +93,7 @@
                     </div>
                 </div>
 
-                <div class="grid grid-cols-3">
+                <div class="grid gap-4 grid-cols-2">
                     <div class="p-4">
                         <h3 class="text-sm font-medium">Stack P</h3>
                         <div class="text-lg text-green-600 flex justify-end">
@@ -119,8 +115,10 @@
                         </div>
                     </div>
                 </div>
+            </section>
 
-                <div class="grid grid-cols-4">
+            <section class="border-2 border-gray-700">
+                <div class="grid gap-4 grid-cols-2">
                     <template x-for="(register, index) in registers">
                         <div class="px-4 py-2">
                             <div class="text-sm font-medium">V<span x-text="index"></span></div>

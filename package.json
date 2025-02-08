@@ -1,0 +1,17 @@
+{
+  "name": "xip8",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "watch": "pnpx @tailwindcss/cli -i static/src/index.css -o static/index.css --watch",
+    "build": "pnpx @tailwindcss/cli -i static/src/index.css -o static/index.css"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.0.4",
+    "tailwindcss": "^4.0.4"
+  }
+}
