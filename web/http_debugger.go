@@ -1,32 +1,35 @@
-package xip8
+package web
 
 import (
-	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/guslan/xip8"
 )
 
 type HttpDebugger struct {
-	Cpu           *Cpu
+	Cpu           *xip8.Cpu
 	CurrentOpCode uint16
 	Cycle         int
 
 	SendEvery int
-	send      chan Cpu
+	send      chan xip8.Cpu
 }
 
 // NewHttpDebugger creates a new debugger
 // This method will pause the cpu, register the hooks, set the execution cpu.CyclesPerFrame to 1
-func NewHttpDebugger(cpu *Cpu) *HttpDebugger {
+func NewHttpDebugger(cpu *xip8.Cpu) *HttpDebugger {
 	deb := HttpDebugger{
 		Cpu:           cpu,
 		CurrentOpCode: 0,
 		Cycle:         0,
 		SendEvery:     1,
-		send:          make(chan Cpu),
+		send:          make(chan xip8.Cpu),
 	}
+
+	deb.setupWs()
 
 	cpu.AddBeforeFrameHook(deb.beforeFrame)
 	cpu.AddBeforeCycleHook(deb.beforeCycle)
@@ -41,16 +44,21 @@ func NewHttpDebugger(cpu *Cpu) *HttpDebugger {
 
 var upgrader = websocket.Upgrader{} // use default options
 
-func (d *HttpDebugger) Listen(port int) error {
-	http.Handle("/", http.FileServer(http.Dir("./static")))
-
+func (d *HttpDebugger) setupWs() {
 	http.HandleFunc("/debugger", func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Connecting  to debugger")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Print("upgrade:", err)
 			return
 		}
 		defer conn.Close()
+
+		go func(cpu xip8.Cpu) {
+			d.send <- cpu
+		}(*d.Cpu)
+
+		slog.Info("Listening for events")
 		for {
 			running := true
 			for running {
@@ -58,7 +66,7 @@ func (d *HttpDebugger) Listen(port int) error {
 				case cpu := <-d.send:
 					err = conn.WriteMessage(websocket.BinaryMessage, d.formatAsEvent(cpu))
 					if err != nil {
-						log.Fatalln("error write:", err)
+						slog.Error("Error writing debugger message")
 						running = false
 					}
 
@@ -68,62 +76,29 @@ func (d *HttpDebugger) Listen(port int) error {
 			}
 		}
 	})
-	http.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
-
-		w.Header().Set("Cache-Control", "no-cache")
-
-		d.Cpu.Start()
-	})
-	http.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
-
-		w.Header().Set("Cache-Control", "no-cache")
-
-		d.Cpu.Stop()
-	})
-	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
-
-		w.Header().Set("Cache-Control", "no-cache")
-
-		d.Cpu.Stop()
-		d.Cpu.Reset()
-	})
-	http.HandleFunc("/step", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
-
-		w.Header().Set("Cache-Control", "no-cache")
-
-		d.Cpu.SingleFrame()
-		d.send <- *d.Cpu
-	})
-
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
-func (d *HttpDebugger) beforeFrame(cpu *Cpu) {
+func (d *HttpDebugger) beforeFrame(cpu *xip8.Cpu) {
 }
 
-func (d *HttpDebugger) beforeCycle(cpu *Cpu) {
+func (d *HttpDebugger) beforeCycle(cpu *xip8.Cpu) {
 	d.CurrentOpCode = uint16(cpu.Memory[cpu.Pc+0]) << 8
 	d.CurrentOpCode |= uint16(cpu.Memory[cpu.Pc+1]) << 0
 }
 
-func (d *HttpDebugger) afterCycle(cpu *Cpu) {
-	if d.Cpu.cycles%uint(d.SendEvery) == 0 {
+func (d *HttpDebugger) afterCycle(cpu *xip8.Cpu) {
+	if d.Cpu.Cycles()%uint(d.SendEvery) == 0 {
 		d.send <- *cpu
 	}
+
+	slog.Info("Cycle ran")
 }
 
-func (d *HttpDebugger) afterFrame(cpu *Cpu) {
+func (d *HttpDebugger) afterFrame(cpu *xip8.Cpu) {
+	slog.Info("Frame ran")
 }
 
-func (d HttpDebugger) formatAsEvent(cpu Cpu) []byte {
+func (d HttpDebugger) formatAsEvent(cpu xip8.Cpu) []byte {
 	buf := make([]byte, 0, 64)
 
 	buf = append(buf, byte((d.CurrentOpCode&0xFF00)>>8))
@@ -143,6 +118,9 @@ func (d HttpDebugger) formatAsEvent(cpu Cpu) []byte {
 	}
 	buf = append(buf, cpu.Dt)
 	buf = append(buf, cpu.St)
+	// For some unknown reasons there is a single empty byte between the sound timer and following stuff
+	buf = append(buf, byte(cpu.ScreenSettings.Width))
+	buf = append(buf, byte(cpu.ScreenSettings.Height))
 
 	return buf
 }

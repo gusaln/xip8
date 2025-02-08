@@ -44,9 +44,9 @@ func TestProgramLoading(t *testing.T) {
 	mem := xip8.NewMemory()
 	kb := xip8.NewInMemoryKeyboard()
 	b := xip8.NewDummyBuzzer()
-	d := xip8.NewInMemoryDisplay(64, 32)
+	d := xip8.DummyDisplay{}
 
-	cpu := xip8.NewCpu(mem, d, kb, b)
+	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
 
 	program := []byte{
 		// move to the last address
@@ -67,9 +67,9 @@ func TestConstantSetInstructions(t *testing.T) {
 	mem := xip8.NewMemory()
 	kb := xip8.NewInMemoryKeyboard()
 	b := xip8.NewDummyBuzzer()
-	d := xip8.NewInMemoryDisplay(64, 32)
+	d := xip8.DummyDisplay{}
 
-	cpu := xip8.NewCpu(mem, d, kb, b)
+	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
 	cpu.CyclesPerFrame = 1
 
 	program := []byte{
@@ -114,9 +114,9 @@ func TestSimpleSkips(t *testing.T) {
 	mem := xip8.NewMemory()
 	kb := xip8.NewInMemoryKeyboard()
 	b := xip8.NewDummyBuzzer()
-	d := xip8.NewInMemoryDisplay(64, 32)
+	d := xip8.DummyDisplay{}
 
-	cpu := xip8.NewCpu(mem, d, kb, b)
+	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
 
 	program := []byte{
 		// set v0 to 128

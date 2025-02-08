@@ -42,10 +42,12 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
-	speedInHz  uint
-	timerEvery uint
-	cycles     uint
-	frames     uint
+	speedInHz uint
+	cycles    uint
+	frames    uint
+
+	ScreenSettings ScreenSettings
+	screen         []byte
 
 	Display        Display
 	CyclesPerFrame uint
@@ -68,14 +70,12 @@ type Cpu struct {
 	afterFrameHooks []Hook
 	// Hooks that run after an error
 	errorHooks []Hook
-
-	renderCh chan interface{}
 }
 
 var speedInHzDefault uint = 30
 var cyclesPerFrameDefault uint = 30
 
-func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
+func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
 		Memory: memory,
 
@@ -87,7 +87,9 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		Sp:    0,
 		Stack: [16]uint16{},
 
-		speedInHz: speedInHzDefault,
+		speedInHz:      speedInHzDefault,
+		ScreenSettings: screenSettings,
+		screen:         newScreen(screenSettings.Width, screenSettings.Height),
 
 		Display:        display,
 		CyclesPerFrame: cyclesPerFrameDefault,
@@ -105,8 +107,6 @@ func NewCpu(memory *Memory, display Display, keyboard Keyboard, buzzer Buzzer) *
 		afterCycleHooks:  make([]Hook, 0),
 		afterFrameHooks:  make([]Hook, 0),
 		errorHooks:       make([]Hook, 0),
-
-		renderCh: make(chan interface{}),
 	}
 }
 
@@ -155,12 +155,6 @@ func (cpu *Cpu) Boot() error {
 
 	cpu.isBooted = true
 
-	go func(cpu *Cpu) {
-		for range cpu.renderCh {
-			cpu.Display.Render()
-		}
-	}(cpu)
-
 	return nil
 }
 
@@ -176,7 +170,7 @@ func (cpu *Cpu) Reset() {
 	cpu.cycles = 0
 	cpu.lastError = nil
 
-	cpu.Display.Clear()
+	cpu.clearScreen()
 }
 
 // Loop sets the speed an starts the loop
@@ -258,7 +252,12 @@ func (cpu *Cpu) nextFrame() (bool, error) {
 		cpu.Buzzer.Play()
 	}
 
-	cpu.renderCh <- nil
+	if err := cpu.Display.Render(cpu.screen, cpu.ScreenSettings); err != nil {
+		cpu.runErrorHooks()
+		cpu.lastError = err
+		return false, err
+	}
+
 	cpu.frames++
 
 	cpu.runAfterFrameHooks()
@@ -281,7 +280,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		switch opCode {
 		case 0x00E0:
 			// CLS :: Clear the display.
-			cpu.Display.Clear()
+			cpu.clearScreen()
 
 		case 0x00EE:
 			// RET :: Return from a subroutine.
@@ -444,7 +443,7 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		y := byte((opCode & 0x00F0) >> 4)
 		n := byte(opCode & 0x000F)
 		for i := byte(0); i < n; i++ {
-			cpu.V[0xF] = bool2byte(cpu.Display.Display(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
+			cpu.V[0xF] = bool2byte(cpu.displayToScreen(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
 		}
 
 	case 0xE000:
