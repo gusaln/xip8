@@ -91,11 +91,11 @@ func (d *HttpDebugger) afterCycle(cpu *xip8.Cpu) {
 		d.send <- *cpu
 	}
 
-	slog.Info("Cycle ran")
+	// slog.Info("Cycle ran")
 }
 
 func (d *HttpDebugger) afterFrame(cpu *xip8.Cpu) {
-	slog.Info("Frame ran")
+	// slog.Info("Frame ran")
 }
 
 func (d HttpDebugger) formatAsEvent(cpu xip8.Cpu) []byte {

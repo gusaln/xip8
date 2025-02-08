@@ -442,8 +442,9 @@ func (cpu *Cpu) execute(opCode uint16) error {
 		x := byte((opCode & 0x0F00) >> 8)
 		y := byte((opCode & 0x00F0) >> 4)
 		n := byte(opCode & 0x000F)
+		cpu.V[0xF] = 0
 		for i := byte(0); i < n; i++ {
-			cpu.V[0xF] = bool2byte(cpu.displayToScreen(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
+			cpu.V[0xF] |= bool2byte(cpu.displayToScreen(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
 		}
 
 	case 0xE000:

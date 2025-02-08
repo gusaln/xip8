@@ -44,6 +44,7 @@ func (cpu Cpu) toScreenCoord(x, y byte) uint {
 func (cpu *Cpu) displayToScreen(x, y, sprite byte) bool {
 	tReal := cpu.toScreenCoord(x, y)
 
+	// We are drawing to an aligned position
 	if tReal%8 == 0 {
 		t := tReal / 8
 
@@ -54,6 +55,7 @@ func (cpu *Cpu) displayToScreen(x, y, sprite byte) bool {
 		return (buf & (cpu.screen[t] ^ 0xFF)) > 0
 	}
 
+	// Not an aligned position.
 	tOffset := tReal % 8
 
 	t := (tReal - tOffset) / 8
