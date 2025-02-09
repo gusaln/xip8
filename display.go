@@ -1,6 +1,9 @@
 package xip8
 
-import "os"
+import (
+	"io"
+	"os"
+)
 
 // Display abstraction for a display
 type Display interface {
@@ -25,13 +28,19 @@ func (d DummyDisplay) Render(screen Screen, settings ScreenSettings) error {
 const ESC = 0x1B
 
 type TerminalDisplay struct {
+	terminal        io.Writer
 	OnChar, OffChar string
 }
 
 func NewTerminalDisplay() *TerminalDisplay {
+	return NewTerminalDisplayWithOutput(os.Stdout)
+}
+
+func NewTerminalDisplayWithOutput(out io.Writer) *TerminalDisplay {
 	return &TerminalDisplay{
-		OnChar:  "##",
-		OffChar: "  ",
+		terminal: out,
+		OnChar:   "##",
+		OffChar:  "  ",
 	}
 }
 
@@ -68,6 +77,6 @@ func (disp *TerminalDisplay) Render(screen Screen, settings ScreenSettings) erro
 
 	}
 
-	os.Stdout.Write(buff)
-	return nil
+	_, err := disp.terminal.Write(buff)
+	return err
 }
