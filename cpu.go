@@ -42,17 +42,19 @@ type Cpu struct {
 	// Stack
 	Stack [16]uint16
 
-	speedInHz uint
-	cycles    uint
-	frames    uint
+	cycles uint
+	frames uint
+
+	speedInHz      uint
+	step           time.Duration
+	CyclesPerFrame uint
 
 	ScreenSettings ScreenSettings
 	screen         []byte
 
-	Display        Display
-	CyclesPerFrame uint
-	Keyboard       Keyboard
-	Buzzer         Buzzer
+	Display  Display
+	Keyboard Keyboard
+	Buzzer   Buzzer
 
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
@@ -72,8 +74,12 @@ type Cpu struct {
 	errorHooks []Hook
 }
 
-var speedInHzDefault uint = 30
-var cyclesPerFrameDefault uint = 30
+const (
+	DefaultSpeed          uint = 500
+	MaxSpeed              uint = 700
+	MinSpeed              uint = 1
+	DefaultCyclesPerFrame uint = 5
+)
 
 func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
 	return &Cpu{
@@ -87,14 +93,16 @@ func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyb
 		Sp:    0,
 		Stack: [16]uint16{},
 
-		speedInHz:      speedInHzDefault,
+		speedInHz:      DefaultSpeed,
+		step:           time.Second / time.Duration(DefaultSpeed),
+		CyclesPerFrame: DefaultCyclesPerFrame,
+
 		ScreenSettings: screenSettings,
 		screen:         newScreen(screenSettings.Width, screenSettings.Height),
 
-		Display:        display,
-		CyclesPerFrame: cyclesPerFrameDefault,
-		Keyboard:       keyboard,
-		Buzzer:         buzzer,
+		Display:  display,
+		Keyboard: keyboard,
+		Buzzer:   buzzer,
 
 		MachineRoutineInterpreter: nil,
 
@@ -108,6 +116,10 @@ func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyb
 		afterFrameHooks:  make([]Hook, 0),
 		errorHooks:       make([]Hook, 0),
 	}
+}
+
+func (cpu Cpu) IsRunning() bool {
+	return !cpu.isPaused
 }
 
 func (cpu Cpu) IsSoundTimerActive() bool {
@@ -124,6 +136,7 @@ func (cpu Cpu) SpeedInHz() uint {
 
 func (cpu *Cpu) SetSpeedInHz(inHz uint) {
 	cpu.speedInHz = inHz
+	cpu.step = time.Second / time.Duration(inHz)
 }
 
 func (cpu Cpu) Cycles() uint {
@@ -171,6 +184,7 @@ func (cpu *Cpu) Reset() {
 	cpu.lastError = nil
 
 	cpu.clearScreen()
+	cpu.Display.Render(cpu.screen, cpu.ScreenSettings)
 }
 
 // Loop sets the speed an starts the loop
@@ -191,11 +205,10 @@ func (cpu *Cpu) Loop() error {
 
 	var last time.Time
 
-	step := time.Second / time.Duration(cpu.speedInHz)
-	// timerStep := time.Second / time.Duration(60)
 	for {
 		if cpu.isPaused {
-			time.Sleep(max(step-time.Since(last), 0))
+			// We do not sleep more than a cycle
+			time.Sleep(max(cpu.step-time.Since(last), 0))
 			last = time.Now()
 			continue
 		}
@@ -206,7 +219,8 @@ func (cpu *Cpu) Loop() error {
 			return nil
 		}
 
-		time.Sleep(max(step-time.Since(last), 0))
+		// Prevent the CPU from running faster than expected
+		time.Sleep(max(cpu.step-time.Since(last), 0))
 		last = time.Now()
 	}
 }
