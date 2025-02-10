@@ -1,9 +1,10 @@
-package main
+package gui
 
 import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	gui "github.com/gen2brain/raylib-go/raygui"
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -28,8 +29,6 @@ const (
 	MessageBarHeigh = 30
 )
 
-var ScreenBgColor = rl.Gold
-var ScreenPixelColor = rl.Yellow
 var MessageBarBgColor = rl.DarkGray
 var MessageBarInfoColor = rl.SkyBlue
 var MessageBarSuccessColor = rl.Lime
@@ -50,11 +49,14 @@ type ConsoleApp struct {
 	*xip8.InMemoryKeyboard
 	// The underlying console
 	Cpu *xip8.Cpu
-	// Speed in Hz
-	speed float32
+	// Speed factor
+	// Speed in Hz is speedFactor+1 * 5
+	speedFactor float32
 	// Unpacked screen representation
 	screen []byte
-	// screenSettings xip8.ScreenSettings
+
+	keyboardLayout    xip8.KeyboardLayout
+	keyboardLookupMap map[ScanCode]byte
 
 	// Window width and height
 	winW, winH int
@@ -68,26 +70,34 @@ type ConsoleApp struct {
 	lastMessageColor rl.Color
 }
 
-func newConsoleApp() *ConsoleApp {
+func speedFactorToHz(s float32) uint {
+	return uint((s + 1) * 5)
+}
+
+func hzToSpeedFactor(hz uint) float32 {
+	return float32(hz)/5 - 1
+}
+
+func NewConsoleApp() *ConsoleApp {
 	app := &ConsoleApp{
-		InMemoryKeyboard: xip8.NewInMemoryKeyboard(),
-		Cpu:              nil,
-		speed:            float32(xip8.DefaultSpeed),
+		InMemoryKeyboard:  xip8.NewInMemoryKeyboard(),
+		Cpu:               nil,
+		speedFactor:       hzToSpeedFactor(xip8.DefaultSpeed),
+		keyboardLayout:    xip8.DefaultKeyboardLayout,
+		keyboardLookupMap: map[ScanCode]byte{},
 	}
 
 	app.Cpu = xip8.NewCpu(xip8.NewMemory(), xip8.SmallScreen, app, app, app)
 	app.screen = make([]byte, app.Cpu.ScreenSettings.Width*app.Cpu.ScreenSettings.Height)
+
+	app.updateKeyboardLookupMap()
 	app.updateWindowSize()
 
 	return app
 }
 
-func (app *ConsoleApp) loadStyles() {
-	slog.Info("Loading styles")
-	gui.LoadStyleFromMemory(resources.StyleRgs)
-}
-
-func (app *ConsoleApp) bootCpu() {
+// Run initializes the console and the UI loop
+func (app *ConsoleApp) Run() {
 	go func(cpu *xip8.Cpu) {
 		slog.Info("starting CPU loop on pause")
 		cpu.Boot()
@@ -97,31 +107,50 @@ func (app *ConsoleApp) bootCpu() {
 			slog.Error("Error booting CPU", slog.Any("error", err))
 		}
 	}(app.Cpu)
+
+	rl.InitWindow(int32(app.winW), int32(app.winH), "xip8")
+	defer rl.CloseWindow()
+
+	app.loadStyles()
+	rl.SetTargetFPS(60)
+	for !rl.WindowShouldClose() {
+		rl.BeginDrawing()
+
+		rl.ClearBackground(rl.Black)
+
+		app.handleFileLoad()
+		app.handleActions()
+		app.handleKeyPress()
+		app.updateCpuSpeed()
+
+		// Sections get rendered from bottom to the top because otherwise so that dropdown menus not
+		app.drawMessageBar()
+		app.drawScreen()
+		app.drawToolbar()
+
+		rl.EndDrawing()
+	}
 }
 
-// Boot implements xip8.Display.
-func (app *ConsoleApp) Boot() error {
-	return nil
-}
-
-// Render implements xip8.Display.
-func (app *ConsoleApp) Render(screen xip8.Screen, settings xip8.ScreenSettings) error {
-	// if len(app.screen) < len(screen) {
-	// 	app.screen = make(xip8.Screen, settings.Width*settings.Height)
-	// }
-
-	for i, t := 0, 0; t < settings.Width*settings.Height; i, t = i+1, t+8 {
-		app.screen[t+0] = (screen[i] >> 7) & 0b1
-		app.screen[t+1] = (screen[i] >> 6) & 0b1
-		app.screen[t+2] = (screen[i] >> 5) & 0b1
-		app.screen[t+3] = (screen[i] >> 4) & 0b1
-		app.screen[t+4] = (screen[i] >> 3) & 0b1
-		app.screen[t+5] = (screen[i] >> 2) & 0b1
-		app.screen[t+6] = (screen[i] >> 1) & 0b1
-		app.screen[t+7] = (screen[i] >> 0) & 0b1
+func (app *ConsoleApp) Load(path string) {
+	program, err := os.ReadFile(path)
+	if err != nil {
+		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
+		return
 	}
 
-	return nil
+	if err = app.Cpu.LoadProgram(program); err != nil {
+		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
+		return
+	}
+
+	// app.Cpu.Memory[0x1FF] = 1
+
+	app.loadedProgramPath = path
+	slog.Info("Program loaded", slog.String("path", path))
+	app.showMessage(fmt.Sprintf("Program '%s' loaded", app.loadedProgramPath), MessageInfo)
+
+	app.Cpu.Start()
 }
 
 // Play implements xip8.Buzzer.
@@ -138,46 +167,42 @@ func (app *ConsoleApp) updateWindowSize() {
 	slog.Info("Updating window size", slog.Int("width", app.winW), slog.Int("height", app.winH))
 }
 
-func (app *ConsoleApp) load(path string) {
-	program, err := os.ReadFile(path)
-	if err != nil {
-		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
-		return
+func (app *ConsoleApp) updateKeyboardLookupMap() {
+	runeToConsoleKey := xip8.LookupMap(app.keyboardLayout)
+	// app.keyboardMap = map[ScanCode]byte{}
+	for r, k := range runeToConsoleKey {
+		app.keyboardLookupMap[runeToKey[r]] = k
 	}
+}
 
-	if err = app.Cpu.LoadProgram(program); err != nil {
-		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
-		return
-	}
-
-	app.loadedProgramPath = path
-	slog.Info("Program loaded", slog.String("path", path))
-	app.showMessage(fmt.Sprintf("Program '%s' loaded", app.loadedProgramPath), MessageInfo)
+func (app *ConsoleApp) loadStyles() {
+	slog.Info("Loading styles")
+	gui.LoadStyleFromMemory(resources.StyleRgs)
 }
 
 func (app *ConsoleApp) handleFileLoad() {
-	// if app.loadBtn {
-	// } else if rl.IsFileDropped() {
-	// 	files := rl.LoadDroppedFiles()
-
-	// 	app.load(files[0])
-
-	// 	rl.UnloadDroppedFiles()
-	// }
 	if rl.IsFileDropped() {
 		files := rl.LoadDroppedFiles()
 		defer rl.UnloadDroppedFiles()
 
-		// slog.Info("Files were dropped", "files", strings.Join(files, ","))
+		slog.Info("Files were dropped", "files", strings.Join(files, ","))
 
-		app.load(files[0])
+		app.Load(files[0])
 	}
+}
+
+func (app ConsoleApp) hasProgramLoaded() bool {
+	return len(app.loadedProgramPath) > 0
 }
 
 func (app *ConsoleApp) handleActions() {
 	if app.startBtn {
-		app.Cpu.Start()
-		slog.Info("Starting the console")
+		if app.hasProgramLoaded() {
+			app.Cpu.Start()
+			slog.Info("Starting the console")
+		} else {
+			app.showMessage("There is no program loaded", MessageError)
+		}
 	}
 	if app.stopBtn {
 		app.Cpu.Stop()
@@ -188,24 +213,35 @@ func (app *ConsoleApp) handleActions() {
 		slog.Info("Resetting the program to the beginning")
 	}
 	if app.stepBtn {
-		app.Cpu.SingleFrame()
+		app.Cpu.LoopOnce()
 		slog.Info("Running a single frame")
 	}
 }
 
-func (app *ConsoleApp) updateCpuSpeed() {
-	app.Cpu.SetSpeedInHz(uint(app.speed))
+func (app *ConsoleApp) handleKeyPress() {
+	for scanCode, key := range app.keyboardLookupMap {
+		if rl.IsKeyDown(scanCode) {
+			app.InMemoryKeyboard.State |= (0b1000000000000000 >> key)
+			// fmt.Printf("keyboard pressed %016b\n", app.InMemoryKeyboard.State)
+		} else {
+			app.InMemoryKeyboard.State &= ^(0b1000000000000000 >> key)
+		}
+	}
 }
 
-var active int32 = 3
-var dropdownOpen bool = false
-var speeds = []int{
-	700, 600, 500, 100, 60, 30,
+func (app *ConsoleApp) updateCpuSpeed() {
+	app.Cpu.SetSpeedInHz(speedFactorToHz(app.speedFactor))
 }
+
+// var active int32 = 3
+// var dropdownOpen bool = false
+// var speeds = []int{
+// 	700, 600, 500, 100, 60, 30,
+// }
 
 const (
-	MinSpeed = float32(xip8.MinSpeed)
-	MaxSpeed = float32(xip8.MaxSpeed)
+	MinSpeed = float32(xip8.MinSpeed/5) - 1
+	MaxSpeed = float32(xip8.MaxSpeed/5) - 1
 )
 
 func (app *ConsoleApp) drawToolbar() {
@@ -225,42 +261,55 @@ func (app *ConsoleApp) drawToolbar() {
 	// 	}
 	// }
 
+	app.startBtn = gui.Button(
+		rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*0, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+		gui.IconText(gui.ICON_PLAYER_PLAY, "Start"),
+	)
+	app.stopBtn = gui.Button(
+		rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*1, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+		gui.IconText(gui.ICON_PLAYER_STOP, "Stop"),
+	)
+	app.stepBtn = gui.Button(
+		rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*2, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+		gui.IconText(gui.ICON_PLAYER_NEXT, "Step"),
+	)
+	app.restBtn = gui.Button(
+		rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*3, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+		gui.IconText(gui.ICON_ROTATE, "Reset"),
+	)
+
+	if app.Cpu.IsRunning() {
+		gui.Label(
+			rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*4, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+			"Running",
+		)
+	} else {
+		gui.Label(
+			rl.NewRectangle(ToolbarGap+ToolbarBtnOffset*4, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
+			"Stopped",
+		)
+	}
+
 	gui.Label(
-		rl.NewRectangle(ToolbarGap, 26, 50, 20),
-		fmt.Sprintf("%.0f Hz", app.speed),
+		rl.NewRectangle(float32(app.winW)-ToolbarGap-150, 26, 50, 20),
+		fmt.Sprintf("%d Hz", speedFactorToHz(app.speedFactor)),
 	)
 
 	if gui.Button(
-		rl.NewRectangle(ToolbarGap+50, 26, 50, 20),
+		rl.NewRectangle(float32(app.winW)-ToolbarGap-150+50, 26, 50, 20),
 		gui.IconText(gui.ICON_ROTATE, ""),
 	) {
-		app.speed = float32(xip8.DefaultSpeed)
+		app.speedFactor = hzToSpeedFactor(xip8.DefaultSpeed)
 	}
 
-	app.speed = gui.Slider(
-		rl.NewRectangle(ToolbarGap*6, ToolbarGap, 100, 20),
+	app.speedFactor = gui.Slider(
+		rl.NewRectangle(float32(app.winW)-ToolbarGap-150, ToolbarGap, 100, 20),
 		"1 Hz", "700 Hz",
-		app.speed,
+		app.speedFactor,
 		MinSpeed,
 		MaxSpeed,
 	)
 
-	app.startBtn = gui.Button(
-		rl.NewRectangle(float32(app.winW)-4*ToolbarBtnOffset, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
-		gui.IconText(gui.ICON_PLAYER_PLAY, "Start"),
-	)
-	app.stopBtn = gui.Button(
-		rl.NewRectangle(float32(app.winW)-3*ToolbarBtnOffset, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
-		gui.IconText(gui.ICON_PLAYER_STOP, "Stop"),
-	)
-	app.stepBtn = gui.Button(
-		rl.NewRectangle(float32(app.winW)-2*ToolbarBtnOffset, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
-		gui.IconText(gui.ICON_PLAYER_NEXT, "Step"),
-	)
-	app.restBtn = gui.Button(
-		rl.NewRectangle(float32(app.winW)-1*ToolbarBtnOffset, ToolbarGap, ToolbarBtnWidth, ToolbarBtnHeight),
-		gui.IconText(gui.ICON_ROTATE, "Reset"),
-	)
 }
 
 var t int

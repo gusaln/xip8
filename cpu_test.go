@@ -18,7 +18,7 @@ func runNCycles(cpu *xip8.Cpu, program []byte, n int) error {
 	}
 
 	for i := 0; i < n; i++ {
-		err := cpu.SingleFrame()
+		err := cpu.LoopOnce()
 		if err != nil {
 			return err
 		}

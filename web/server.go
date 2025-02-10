@@ -129,7 +129,7 @@ func (server *Server) Listen(port int) error {
 		w.Header().Set("Cache-Control", "no-cache")
 
 		slog.Info("Single Frame")
-		server.cpu.SingleFrame()
+		server.cpu.LoopOnce()
 	})
 	http.HandleFunc("/display", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

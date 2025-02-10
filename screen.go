@@ -42,6 +42,8 @@ func (cpu Cpu) toScreenCoord(x, y byte) uint {
 // Sprites are XORed onto the existing screen.
 // Returns whether there was a collision or not.
 func (cpu *Cpu) displayToScreen(x, y, sprite byte) bool {
+	cpu.isScreenDirty = true
+
 	tReal := cpu.toScreenCoord(x, y)
 
 	// We are drawing to an aligned position

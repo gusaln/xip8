@@ -1,20 +1,98 @@
 package xip8
 
 import (
-	"errors"
 	"log"
 
 	"github.com/pkg/term"
 )
 
+// KeyboardLayout represents the a keyboard layout
+//
+// Note that the codes are not in ascending sequence, but rather in the layout
+// of the original COSMAC VIP keypad.
+// Keycodes should be given in the following order
+//
+// # 1 2 3 C
+//
+// # 4 5 6 D
+//
+// # 7 8 9 E
+//
+// # A 0 B F
+type KeyboardLayout = [16]rune
+type KeyboardLookupMap = map[rune]byte
+
+// CosmacVipKeyboardLayout
+//
+// # 1 2 3 C
+//
+// # 4 5 6 D
+//
+// # 7 8 9 E
+//
+// # A 0 B F
+var CosmacVipKeyboardLayout = KeyboardLayout{
+	'1', '2', '3', 'C',
+	'4', '5', '6', 'D',
+	'7', '8', '9', 'E',
+	'A', '0', 'B', 'F',
+}
+
+// CosmacVipInQwertyKeyboardLayout
+//
+// # 1 2 3 4
+//
+// # Q W E R
+//
+// # A S D F
+//
+// # Z X C V
+var CosmacVipInQwertyKeyboardLayout = KeyboardLayout{
+	'1', '2', '3', '4',
+	'Q', 'W', 'E', 'R',
+	'A', 'S', 'D', 'F',
+	'Z', 'X', 'C', 'V',
+}
+
+// SimpleKeyboardLayout is an alias for CosmacVipKeyboardLayout
+// Simple as in "every key correspond to its keypad equivalent"
+var SimpleKeyboardLayout = CosmacVipKeyboardLayout
+
+// DefaultKeyboardLayout is CosmacVipInQwertyKeyboardLayout
+var DefaultKeyboardLayout = CosmacVipInQwertyKeyboardLayout
+
+func LookupMap(layout KeyboardLayout) KeyboardLookupMap {
+	m := map[rune]byte{
+		layout[0]:  0x1,
+		layout[1]:  0x2,
+		layout[2]:  0x3,
+		layout[3]:  0xc,
+		layout[4]:  0x4,
+		layout[5]:  0x5,
+		layout[6]:  0x6,
+		layout[7]:  0xd,
+		layout[8]:  0x7,
+		layout[9]:  0x8,
+		layout[10]: 0x9,
+		layout[11]: 0xe,
+		layout[12]: 0xa,
+		layout[13]: 0x0,
+		layout[14]: 0xb,
+		layout[15]: 0xf,
+	}
+
+	return m
+}
+
 type KeyboardState [16]bool
 
+// Keyboard interface
 type Keyboard interface {
 	// Boot initializes the component
 	Boot() error
 	IsPressed(k byte) bool
-	// WaitForKey blocks the execution and waits for a key to be pressed
-	WaitForKey() (k byte, err error)
+	// GetPressed blocks the execution and waits for a key to be pressed
+	GetPressed() (k byte, pressed bool)
 }
 
 type InMemoryKeyboard struct {
@@ -27,12 +105,14 @@ func NewInMemoryKeyboard() *InMemoryKeyboard {
 	}
 }
 
+// Boot implements Keyboard.
 func (kb *InMemoryKeyboard) Boot() error {
 	return nil
 }
 
-func (kb InMemoryKeyboard) getPressed() (byte, bool) {
-	for i := byte(0); i < 8; i++ {
+// GetPressed implements Keyboard.
+func (kb InMemoryKeyboard) GetPressed() (byte, bool) {
+	for i := byte(0); i < 16; i++ {
 		if kb.IsPressed(i) {
 			return i, true
 		}
@@ -41,20 +121,16 @@ func (kb InMemoryKeyboard) getPressed() (byte, bool) {
 	return 0, false
 }
 
+const (
+	KeyMask = 1 << 15
+)
+
+// IsPressed implements Keyboard.
 func (kb *InMemoryKeyboard) IsPressed(k byte) bool {
 	if k > 15 {
 		return false
 	}
-	return (kb.State & (1 >> k)) > 0
-}
-
-func (kb *InMemoryKeyboard) WaitForKey() (byte, error) {
-	k, ok := kb.getPressed()
-	if ok {
-		return k, nil
-	}
-
-	return 0, errors.New("keyboard does not support blocking execution")
+	return (kb.State & (KeyMask >> k)) > 0
 }
 
 // func (kb InMemoryKeyboard) Get() KeyboardState {

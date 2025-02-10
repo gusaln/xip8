@@ -51,6 +51,7 @@ type Cpu struct {
 
 	ScreenSettings ScreenSettings
 	screen         []byte
+	isScreenDirty  bool
 
 	Display  Display
 	Keyboard Keyboard
@@ -58,9 +59,11 @@ type Cpu struct {
 
 	MachineRoutineInterpreter MachineRoutineInterpreter
 
-	isBooted  bool
-	isPaused  bool
-	lastError error
+	isBooted       bool
+	isPaused       bool
+	waitingForKey  bool
+	keyDstRegister uint16
+	lastError      error
 
 	// Hooks that run before every frame
 	beforeFrameHooks []Hook
@@ -77,8 +80,8 @@ type Cpu struct {
 const (
 	DefaultSpeed          uint = 500
 	MaxSpeed              uint = 700
-	MinSpeed              uint = 1
-	DefaultCyclesPerFrame uint = 5
+	MinSpeed              uint = 5
+	DefaultCyclesPerFrame uint = 30
 )
 
 func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
@@ -99,6 +102,7 @@ func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyb
 
 		ScreenSettings: screenSettings,
 		screen:         newScreen(screenSettings.Width, screenSettings.Height),
+		isScreenDirty:  false,
 
 		Display:  display,
 		Keyboard: keyboard,
@@ -106,9 +110,11 @@ func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyb
 
 		MachineRoutineInterpreter: nil,
 
-		isBooted:  false,
-		isPaused:  false,
-		lastError: nil,
+		isBooted:       false,
+		isPaused:       false,
+		waitingForKey:  false,
+		keyDstRegister: 0,
+		lastError:      nil,
 
 		beforeFrameHooks: make([]Hook, 0),
 		beforeCycleHooks: make([]Hook, 0),
@@ -181,6 +187,7 @@ func (cpu *Cpu) Reset() {
 	cpu.Pc = startOfProgram
 	cpu.frames = 0
 	cpu.cycles = 0
+	cpu.waitingForKey = false
 	cpu.lastError = nil
 
 	cpu.clearScreen()
@@ -206,14 +213,7 @@ func (cpu *Cpu) Loop() error {
 	var last time.Time
 
 	for {
-		if cpu.isPaused {
-			// We do not sleep more than a cycle
-			time.Sleep(max(cpu.step-time.Since(last), 0))
-			last = time.Now()
-			continue
-		}
-
-		if done, err := cpu.nextFrame(); err != nil {
+		if done, err := cpu.runNextCycle(); err != nil {
 			return err
 		} else if done {
 			return nil
@@ -225,7 +225,8 @@ func (cpu *Cpu) Loop() error {
 	}
 }
 
-func (cpu *Cpu) SingleFrame() error {
+// LoopOnce runs a single cycle bypassing the pause state
+func (cpu *Cpu) LoopOnce() error {
 	if !cpu.isBooted {
 		return ErrCpuIsNotBooted
 	}
@@ -234,19 +235,38 @@ func (cpu *Cpu) SingleFrame() error {
 		return cpu.lastError
 	}
 
-	if _, err := cpu.nextFrame(); err != nil {
+	prev := cpu.isPaused
+	cpu.isPaused = false
+	defer func(cpu *Cpu, prev bool) {
+		cpu.isPaused = prev
+	}(cpu, prev)
+
+	if _, err := cpu.runNextCycle(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (cpu *Cpu) nextFrame() (bool, error) {
+func (cpu *Cpu) runNextCycle() (bool, error) {
 	cpu.runBeforeFrameHooks()
 
-	for i := 0; i < int(cpu.CyclesPerFrame); i++ {
+	if cpu.isPaused {
+		return false, nil
+	}
+
+	if cpu.waitingForKey {
+		if k, pressed := cpu.Keyboard.GetPressed(); pressed {
+			cpu.V[cpu.keyDstRegister] = k
+			cpu.waitingForKey = false
+		}
+		for cpu.Keyboard.IsPressed(cpu.V[cpu.keyDstRegister]) {
+
+		}
+	} else {
+		// for i := 0; i < int(cpu.CyclesPerFrame); i++ {
 		cpu.runBeforeCycleHooks()
-		if err := cpu.nextCycle(); err != nil {
+		if err := cpu.executeNextInstruction(); err != nil {
 			cpu.runErrorHooks()
 			cpu.lastError = err
 			return false, err
@@ -257,6 +277,7 @@ func (cpu *Cpu) nextFrame() (bool, error) {
 		if cpu.Pc >= MEMORY_SIZE {
 			return true, nil
 		}
+		// }
 	}
 
 	cpu.Dt = min(cpu.Dt-1, 0)
@@ -266,29 +287,34 @@ func (cpu *Cpu) nextFrame() (bool, error) {
 		cpu.Buzzer.Play()
 	}
 
-	if err := cpu.Display.Render(cpu.screen, cpu.ScreenSettings); err != nil {
-		cpu.runErrorHooks()
-		cpu.lastError = err
-		return false, err
+	// if cpu.cycles%cpu.CyclesPerFrame == 0 {
+	if cpu.isScreenDirty {
+		cpu.isScreenDirty = false
+		if err := cpu.Display.Render(cpu.screen, cpu.ScreenSettings); err != nil {
+			cpu.runErrorHooks()
+			cpu.lastError = err
+			return false, err
+		}
 	}
 
 	cpu.frames++
+	// }
 
 	cpu.runAfterFrameHooks()
 
 	return false, nil
 }
 
-func (cpu *Cpu) nextCycle() error {
+func (cpu *Cpu) executeNextInstruction() error {
 	var opCode uint16
 	opCode |= uint16(cpu.Memory[cpu.Pc+0]) << 8
 	opCode |= uint16(cpu.Memory[cpu.Pc+1]) << 0
 	cpu.Pc += 2
 
-	return cpu.execute(opCode)
+	return cpu.executeInstruction(opCode)
 }
 
-func (cpu *Cpu) execute(opCode uint16) error {
+func (cpu *Cpu) executeInstruction(opCode uint16) error {
 	switch opCode & 0xF000 {
 	case 0x0000:
 		switch opCode {
@@ -488,11 +514,8 @@ func (cpu *Cpu) execute(opCode uint16) error {
 			cpu.V[x] = cpu.Dt
 		case 0x000A:
 			// LD Vx, K :: Wait for a key press, store the value of the key in Vx.
-			k, err := cpu.Keyboard.WaitForKey()
-			if err != nil {
-				return err
-			}
-			cpu.V[x] = k
+			cpu.waitingForKey = true
+			cpu.keyDstRegister = x
 
 		case 0x0015:
 			// LD DT, Vx :: Set delay timer = Vx.

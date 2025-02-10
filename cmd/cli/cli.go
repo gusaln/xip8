@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	mem := xip8.NewMemory()
-	kb := xip8.NewTerminalKeyboard()
+	kb := xip8.NewInMemoryKeyboard()
 	b := xip8.NewDummyBuzzer()
 	d := xip8.NewTerminalDisplay()
 
