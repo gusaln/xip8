@@ -41,12 +41,7 @@ func assertVxEq(t *testing.T, msg string, cpu *xip8.Cpu, x, kk byte) {
 
 // TestProgramLoading loads a program that jumps to the las address to exit immediately
 func TestProgramLoading(t *testing.T) {
-	mem := xip8.NewMemory()
-	kb := xip8.NewInMemoryKeyboard()
-	b := xip8.NewDummyBuzzer()
-	d := xip8.DummyDisplay{}
-
-	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
+	cpu := xip8.NewCpu()
 
 	program := []byte{
 		// move to the last address
@@ -64,12 +59,8 @@ func TestProgramLoading(t *testing.T) {
 
 // TestConstantSetInstructions
 func TestConstantSetInstructions(t *testing.T) {
-	mem := xip8.NewMemory()
-	kb := xip8.NewInMemoryKeyboard()
-	b := xip8.NewDummyBuzzer()
-	d := xip8.DummyDisplay{}
 
-	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
+	cpu := xip8.NewCpu()
 	cpu.CyclesPerFrame = 1
 
 	program := []byte{
@@ -111,12 +102,7 @@ func TestConstantSetInstructions(t *testing.T) {
 
 // TestSimpleSkips loads a program that jumps to the las address to exit immediately
 func TestSimpleSkips(t *testing.T) {
-	mem := xip8.NewMemory()
-	kb := xip8.NewInMemoryKeyboard()
-	b := xip8.NewDummyBuzzer()
-	d := xip8.DummyDisplay{}
-
-	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
+	cpu := xip8.NewCpu()
 
 	program := []byte{
 		// set v0 to 128

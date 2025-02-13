@@ -58,16 +58,21 @@ func (cpu *Cpu) displayToScreen(x, y, sprite byte) bool {
 	}
 
 	// Not an aligned position.
+	// @FIXME: This does not wrap correctly when it is at the edge of the screen
 	tOffset := tReal % 8
 
-	t := (tReal - tOffset) / 8
+	t1 := (tReal - tOffset) / 8
+	t2 := t1 + 1
 
-	firstBuf := cpu.screen[t]
-	cpu.screen[t] = cpu.screen[t] ^ byte(sprite>>byte(tOffset))
+	firstBuf := cpu.screen[t1]
+	cpu.screen[t1] = cpu.screen[t1] ^ byte(sprite>>byte(tOffset))
 
-	secondBuf := cpu.screen[t+1]
-	cpu.screen[t+1] = cpu.screen[t+1] ^ byte(sprite<<byte(8-tOffset))
+	if (t2*8)%uint(cpu.ScreenSettings.Width) == 0 {
+		t2 -= uint(cpu.ScreenSettings.Width / 8)
+	}
+	secondBuf := cpu.screen[t2]
+	cpu.screen[t2] = cpu.screen[t2] ^ byte(sprite<<byte(8-tOffset))
 
 	// previous & ~current
-	return ((firstBuf & (cpu.screen[t] ^ 0xFF)) > 0) || ((secondBuf & (cpu.screen[t+1] ^ 0xFF)) > 0)
+	return ((firstBuf & (cpu.screen[t1] ^ 0xFF)) > 0) || ((secondBuf & (cpu.screen[t2] ^ 0xFF)) > 0)
 }

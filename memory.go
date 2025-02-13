@@ -20,6 +20,7 @@ func newEmptyMemory() *Memory {
 	return &m
 }
 
+// NewMemory creates an empty memory of 4096 bytes
 func NewMemory() *Memory {
 	m := newEmptyMemory()
 
@@ -63,6 +64,7 @@ func (mem Memory) IsEqual(other Memory) bool {
 	return yes
 }
 
+// LoadProgram loads the program at the appropriate location
 func (mem *Memory) LoadProgram(program []byte) error {
 	loadCharactersInto(mem)
 

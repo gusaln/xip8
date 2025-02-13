@@ -17,6 +17,10 @@ type Display interface {
 type DummyDisplay struct {
 }
 
+func NewDummyDisplay() *DummyDisplay {
+	return &DummyDisplay{}
+}
+
 func (d DummyDisplay) Boot() error {
 	return nil
 }

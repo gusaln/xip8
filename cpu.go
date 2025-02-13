@@ -24,6 +24,27 @@ var ErrStackOverflow = errors.New("stack overflow: try to push to a full stack")
 // MachineRoutineInterpreter interpretes
 type MachineRoutineInterpreter func(opCode uint16, cpu *Cpu) error
 
+type QuirkFlag = byte
+
+const (
+	FlagQuirkVfReset          QuirkFlag = 0b00001
+	FlagQuirkMemoryMovesIndex QuirkFlag = 0b00010
+	FlagQuirkClipping         QuirkFlag = 0b00100
+	FlagQuirkShiftWithVy      QuirkFlag = 0b01000
+	FlagQuirkJumpUsesVx       QuirkFlag = 0b10000
+)
+
+const (
+	Chip8Quirks QuirkFlag = FlagQuirkVfReset | FlagQuirkShiftWithVy | FlagQuirkMemoryMovesIndex
+)
+
+const (
+	DefaultSpeed          uint = 500
+	MaxSpeed              uint = 700
+	MinSpeed              uint = 5
+	DefaultCyclesPerFrame uint = 30
+)
+
 // Chip-8 CPU
 type Cpu struct {
 	Memory *Memory
@@ -48,6 +69,8 @@ type Cpu struct {
 	speedInHz      uint
 	step           time.Duration
 	CyclesPerFrame uint
+
+	quirks QuirkFlag
 
 	ScreenSettings ScreenSettings
 	screen         []byte
@@ -77,16 +100,38 @@ type Cpu struct {
 	errorHooks []Hook
 }
 
-const (
-	DefaultSpeed          uint = 500
-	MaxSpeed              uint = 700
-	MinSpeed              uint = 5
-	DefaultCyclesPerFrame uint = 30
-)
+// CpuConfig
+type CpuConfig struct {
+	// Defaults to the
+	Memory *Memory
+	// Defaults to SmallScreen
+	ScreenSettings ScreenSettings
+	// Defaults to nothing
+	Quirks QuirkFlag
+	// Defaults to DummyDisplay
+	Display Display
+	// Defaults to InMemoryKeyboard
+	Keyboard Keyboard
+	// Defaults to DummyBuzzer
+	Buzzer Buzzer
+}
+type CpuConfigCb func(config *CpuConfig)
 
-func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyboard Keyboard, buzzer Buzzer) *Cpu {
+func NewCpu(configs ...CpuConfigCb) *Cpu {
+	config := &CpuConfig{
+		Memory:         NewMemory(),
+		ScreenSettings: SmallScreen,
+		Quirks:         Chip8Quirks,
+		Display:        NewDummyDisplay(),
+		Keyboard:       NewInMemoryKeyboard(),
+		Buzzer:         NewDummyBuzzer(),
+	}
+	for _, cb := range configs {
+		cb(config)
+	}
+
 	return &Cpu{
-		Memory: memory,
+		Memory: config.Memory,
 
 		V:     [16]byte{},
 		I:     0,
@@ -100,13 +145,15 @@ func NewCpu(memory *Memory, screenSettings ScreenSettings, display Display, keyb
 		step:           time.Second / time.Duration(DefaultSpeed),
 		CyclesPerFrame: DefaultCyclesPerFrame,
 
-		ScreenSettings: screenSettings,
-		screen:         newScreen(screenSettings.Width, screenSettings.Height),
+		quirks: config.Quirks,
+
+		ScreenSettings: config.ScreenSettings,
+		screen:         newScreen(config.ScreenSettings.Width, config.ScreenSettings.Height),
 		isScreenDirty:  false,
 
-		Display:  display,
-		Keyboard: keyboard,
-		Buzzer:   buzzer,
+		Display:  config.Display,
+		Keyboard: config.Keyboard,
+		Buzzer:   config.Buzzer,
 
 		MachineRoutineInterpreter: nil,
 
@@ -151,6 +198,10 @@ func (cpu Cpu) Cycles() uint {
 
 func (cpu Cpu) Frames() uint {
 	return cpu.frames
+}
+
+func (cpu *Cpu) SetQuirks(q QuirkFlag) {
+	cpu.quirks = q
 }
 
 // Boot initializes all the components
@@ -287,18 +338,18 @@ func (cpu *Cpu) runNextCycle() (bool, error) {
 		cpu.Buzzer.Play()
 	}
 
-	// if cpu.cycles%cpu.CyclesPerFrame == 0 {
-	if cpu.isScreenDirty {
+	if cpu.cycles%cpu.CyclesPerFrame == 0 {
+		// if cpu.isScreenDirty {
 		cpu.isScreenDirty = false
 		if err := cpu.Display.Render(cpu.screen, cpu.ScreenSettings); err != nil {
 			cpu.runErrorHooks()
 			cpu.lastError = err
 			return false, err
 		}
-	}
+		// }
 
-	cpu.frames++
-	// }
+		cpu.frames++
+	}
 
 	cpu.runAfterFrameHooks()
 
@@ -314,7 +365,19 @@ func (cpu *Cpu) executeNextInstruction() error {
 	return cpu.executeInstruction(opCode)
 }
 
+var x uint16
+var y uint16
+var n byte
+var kk byte
+var nnn uint16
+
 func (cpu *Cpu) executeInstruction(opCode uint16) error {
+	x = (opCode & 0x0F00) >> 8
+	y = (opCode & 0x00F0) >> 4
+	n = byte(opCode & 0x000F)
+	kk = byte(opCode & 0x00FF)
+	nnn = (opCode & 0x0FFF)
+
 	switch opCode & 0xF000 {
 	case 0x0000:
 		switch opCode {
@@ -341,7 +404,7 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 	case 0x1000:
 		// JP addr :: Jump to location nnn.
-		cpu.Pc = uint16(opCode & 0x0FFF)
+		cpu.Pc = nnn
 
 	case 0x2000:
 		// CALL addr :: Call subroutine at nnn.
@@ -351,49 +414,40 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 		cpu.Stack[cpu.Sp] = cpu.Pc
 		cpu.Sp++
 
-		cpu.Pc = uint16(opCode & 0x0FFF)
+		cpu.Pc = nnn
 
 	case 0x3000:
 		// SE Vx, byte :: Skip next instruction if Vx = kk.
-		x := (opCode & 0x0F00) >> 8
-		kk := byte(opCode & 0x00FF)
+		// kk := byte(opCode & 0x00FF)
 		if cpu.V[x] == kk {
 			cpu.Pc += 2
 		}
 
 	case 0x4000:
 		// SNE Vx, byte :: Skip next instruction if Vx != kk.
-		x := (opCode & 0x0F00) >> 8
-		kk := byte(opCode & 0x00FF)
+		// kk := byte(opCode & 0x00FF)
 		if cpu.V[x] != kk {
 			cpu.Pc += 2
 		}
 
 	case 0x5000:
 		// SE Vx, Vy :: Skip next instruction if Vx = Vy.
-		x := (opCode & 0x0F00) >> 8
-		y := (opCode & 0x00F0) >> 4
 		if cpu.V[x] == cpu.V[y] {
 			cpu.Pc += 2
 		}
 
 	case 0x6000:
 		// LD Vx, byte :: Set Vx = kk.
-		x := (opCode & 0x0F00) >> 8
-		kk := byte(opCode & 0x00FF)
+		// kk := byte(opCode & 0x00FF)
 		cpu.V[x] = kk
 
 	case 0x7000:
 		// ADD Vx, byte :: Set Vx = Vx + kk.
-		x := (opCode & 0x0F00) >> 8
-		kk := byte(opCode & 0x00FF)
+		// kk := byte(opCode & 0x00FF)
 		cpu.V[x] = cpu.V[x] + kk
 
 	case 0x8000:
 		// Inter-register operations
-
-		x := (opCode & 0x0F00) >> 8
-		y := (opCode & 0x00F0) >> 4
 
 		switch opCode & 0x000F {
 		case 0x0000:
@@ -402,14 +456,23 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 		case 0x0001:
 			// OR Vx, Vy :: Set Vx = Vx OR Vy.
+			if (cpu.quirks & FlagQuirkVfReset) > 0 {
+				cpu.V[0xF] = 0
+			}
 			cpu.V[x] |= cpu.V[y]
 
 		case 0x0002:
 			// AND Vx, Vy :: Set Vx = Vx AND Vy.
+			if (cpu.quirks & FlagQuirkVfReset) > 0 {
+				cpu.V[0xF] = 0
+			}
 			cpu.V[x] &= cpu.V[y]
 
 		case 0x0003:
 			// XOR Vx, Vy :: Set Vx = Vx XOR Vy.
+			if (cpu.quirks & FlagQuirkVfReset) > 0 {
+				cpu.V[0xF] = 0
+			}
 			cpu.V[x] ^= cpu.V[y]
 
 		case 0x0004:
@@ -426,6 +489,9 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 		case 0x0006:
 			// SHR Vx {, Vy} :: Set Vx = Vx SHR 1.
+			if (cpu.quirks & FlagQuirkShiftWithVy) > 0 {
+				cpu.V[x] = cpu.V[y]
+			}
 			carry := cpu.V[x] & 0b00000001
 			cpu.V[x] = cpu.V[x] >> 1
 			cpu.V[0xF] = carry
@@ -438,6 +504,9 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 		case 0x000E:
 			// SHL Vx {, Vy} :: Set Vx = Vx SHL 1.
+			if (cpu.quirks & FlagQuirkShiftWithVy) > 0 {
+				cpu.V[x] = cpu.V[y]
+			}
 			carry := (cpu.V[x] & 0b10000000) >> 7
 			cpu.V[x] = cpu.V[x] << 1
 			cpu.V[0xF] = carry
@@ -445,24 +514,25 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 	case 0x9000:
 		// SNE Vx, Vy :: Skip next instruction if Vx != Vy.
-		x := (opCode & 0x0F00) >> 8
-		y := (opCode & 0x00F0) >> 4
 		if cpu.V[x] != cpu.V[y] {
 			cpu.Pc += 2
 		}
 
 	case 0xA000:
 		// LD I, addr :: Set I = nnn.
-		cpu.I = opCode & 0x0FFF
+		cpu.I = nnn
 
 	case 0xB000:
-		// JP V0, addr :: Jump to location nnn + V0.
-		cpu.Pc = uint16(cpu.V[0]) + (opCode & 0x0FFF)
+		// JP V0, addr :: Jump to location nnn + V0 or xnn + Vx .
+		if (cpu.quirks & FlagQuirkJumpUsesVx) > 0 {
+			cpu.Pc = uint16(cpu.V[x]) + nnn
+		} else {
+			cpu.Pc = uint16(cpu.V[0]) + nnn
+		}
 
 	case 0xC000:
 		// RND Vx, byte :: Set Vx = random byte AND kk.
-		x := (opCode & 0x0F00) >> 8
-		kk := byte(opCode & 0x00FF)
+		// kk := byte(opCode & 0x00FF)
 
 		buff := [1]byte{}
 		n, err := rand.Read(buff[:])
@@ -479,9 +549,6 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 		// If this causes any pixels to be erased, VF is set to 1, otherwise it is set to 0. If the sprite is
 		// positioned so part of it is outside the coordinates of the display, it wraps around to the opposite side of
 		// the screen.
-		x := byte((opCode & 0x0F00) >> 8)
-		y := byte((opCode & 0x00F0) >> 4)
-		n := byte(opCode & 0x000F)
 		cpu.V[0xF] = 0
 		for i := byte(0); i < n; i++ {
 			cpu.V[0xF] |= bool2byte(cpu.displayToScreen(cpu.V[x], cpu.V[y]+i, cpu.Memory[cpu.I+uint16(i)]))
@@ -489,7 +556,6 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 	case 0xE000:
 		// Skip if ...
-		x := (opCode & 0x0F00) >> 8
 
 		switch opCode & 0x00FF {
 		case 0x009E:
@@ -506,7 +572,6 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 
 	case 0xF000:
 		// other operations
-		x := (opCode & 0x0F00) >> 8
 
 		switch opCode & 0x00FF {
 		case 0x0007:
@@ -542,10 +607,16 @@ func (cpu *Cpu) executeInstruction(opCode uint16) error {
 			for i := uint16(0); i <= x; i++ {
 				cpu.Memory[cpu.I+i] = cpu.V[i]
 			}
+			if (cpu.quirks & FlagQuirkMemoryMovesIndex) > 0 {
+				cpu.I += x + 1
+			}
 		case 0x0065:
 			// LD Vx, [I] :: Read registers V0 through Vx from memory starting at location I.
 			for i := uint16(0); i <= x; i++ {
 				cpu.V[i] = cpu.Memory[cpu.I+i]
+			}
+			if (cpu.quirks & FlagQuirkMemoryMovesIndex) > 0 {
+				cpu.I += x + 1
 			}
 		default:
 			return ErrOpCodeUnknown{

@@ -17,12 +17,9 @@ func main() {
 
 	flag.Parse()
 
-	mem := xip8.NewMemory()
-	kb := xip8.NewInMemoryKeyboard()
-	b := xip8.NewDummyBuzzer()
-	d := xip8.NewTerminalDisplay()
-
-	cpu := xip8.NewCpu(mem, xip8.SmallScreen, d, kb, b)
+	cpu := xip8.NewCpu(func(config *xip8.CpuConfig) {
+		config.Display = xip8.NewTerminalDisplay()
+	})
 	if flag.NArg() < 1 {
 		log.Fatalln("must provide the path to a rom as an argument")
 	}

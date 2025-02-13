@@ -10,12 +10,12 @@ var ScreenBgColor = rl.Gold
 var ScreenPixelColor = rl.Yellow
 
 // Boot implements xip8.Display.
-func (app *ConsoleApp) Boot() error {
+func (app *App) Boot() error {
 	return nil
 }
 
 // Render implements xip8.Display.
-func (app *ConsoleApp) Render(screen xip8.Screen, settings xip8.ScreenSettings) error {
+func (app *App) Render(screen xip8.Screen, settings xip8.ScreenSettings) error {
 	// if len(app.screen) < len(screen) {
 	// 	app.screen = make(xip8.Screen, settings.Width*settings.Height)
 	// }

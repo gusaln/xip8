@@ -54,7 +54,12 @@ func NewServer(mem *xip8.Memory, configs ...ServerConfigCb) *Server {
 		keyCh:    make(chan xip8.KeyboardState),
 	}
 
-	s.cpu = xip8.NewCpu(mem, config.ScreenSettings, s, s, s.DummyBuzzer)
+	s.cpu = xip8.NewCpu(func(config *xip8.CpuConfig) {
+		config.Memory = mem
+		config.Display = s
+		config.Keyboard = s
+		config.Buzzer = s
+	})
 	if config.UseDebugger {
 		s.debugger = NewHttpDebugger(s.cpu)
 	}

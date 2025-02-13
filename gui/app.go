@@ -19,11 +19,13 @@ const (
 	ToolbarHeight    = 50
 	ToolbarBtnOffset = ToolbarBtnWidth + ToolbarGap
 
-	ScreenMargin    = 10
-	ScreenHeight    = 400
-	ScreenPixelSize = 15
-	ScreenPositionX = 0
-	ScreenPositionY = ToolbarHeight + 1
+	ScreenPixelSizeLarge = 16
+	ScreenPixelSizeSmall = 12
+	ScreenWidth          = 64 * ScreenPixelSizeLarge
+	ScreenHeight         = 32 * ScreenPixelSizeLarge
+	ScreenMargin         = 10
+	ScreenPositionX      = 0
+	ScreenPositionY      = ToolbarHeight + 1
 
 	MessageBarGap   = 5
 	MessageBarHeigh = 30
@@ -44,7 +46,7 @@ const (
 	MessageError
 )
 
-type ConsoleApp struct {
+type App struct {
 	// The underlying console
 	*xip8.InMemoryKeyboard
 	// The underlying console
@@ -53,18 +55,20 @@ type ConsoleApp struct {
 	// Speed in Hz is speedFactor+1 * 5
 	speedFactor float32
 	// Unpacked screen representation
-	screen []byte
+	screen     []byte
+	pixelScale int32
 
 	keyboardLayout    xip8.KeyboardLayout
 	keyboardLookupMap map[ScanCode]byte
 
+	useDebugger bool
+
+	loadedProgramPath string
+
 	// Window width and height
 	winW, winH int
 
-	// Toolbar
 	loadBtn, startBtn, stopBtn, stepBtn, restBtn bool
-
-	loadedProgramPath string
 
 	lastMessage      string
 	lastMessageColor rl.Color
@@ -78,16 +82,37 @@ func hzToSpeedFactor(hz uint) float32 {
 	return float32(hz)/5 - 1
 }
 
-func NewConsoleApp() *ConsoleApp {
-	app := &ConsoleApp{
-		InMemoryKeyboard:  xip8.NewInMemoryKeyboard(),
-		Cpu:               nil,
-		speedFactor:       hzToSpeedFactor(xip8.DefaultSpeed),
-		keyboardLayout:    xip8.DefaultKeyboardLayout,
-		keyboardLookupMap: map[ScanCode]byte{},
+// AppConfig
+type AppConfig struct {
+	// The initial speed
+	Speed       uint
+	UseDebugger bool
+}
+type AppConfigCb func(config *AppConfig)
+
+func NewApp(configs ...AppConfigCb) *App {
+	config := &AppConfig{
+		Speed:       xip8.DefaultSpeed,
+		UseDebugger: false,
+	}
+	for _, cb := range configs {
+		cb(config)
 	}
 
-	app.Cpu = xip8.NewCpu(xip8.NewMemory(), xip8.SmallScreen, app, app, app)
+	app := &App{
+		InMemoryKeyboard:  xip8.NewInMemoryKeyboard(),
+		Cpu:               nil,
+		speedFactor:       hzToSpeedFactor(config.Speed),
+		keyboardLayout:    xip8.DefaultKeyboardLayout,
+		keyboardLookupMap: map[ScanCode]byte{},
+		useDebugger:       config.UseDebugger,
+	}
+
+	app.Cpu = xip8.NewCpu(func(config *xip8.CpuConfig) {
+		config.Display = app
+		config.Keyboard = app
+		config.Buzzer = app
+	})
 	app.screen = make([]byte, app.Cpu.ScreenSettings.Width*app.Cpu.ScreenSettings.Height)
 
 	app.updateKeyboardLookupMap()
@@ -97,16 +122,18 @@ func NewConsoleApp() *ConsoleApp {
 }
 
 // Run initializes the console and the UI loop
-func (app *ConsoleApp) Run() {
-	go func(cpu *xip8.Cpu) {
+func (app *App) Run(autostart bool) {
+	go func(cpu *xip8.Cpu, autostart bool) {
 		slog.Info("starting CPU loop on pause")
 		cpu.Boot()
+		// if !app.hasProgramLoaded() || !autostart {
 		cpu.Stop()
+		// }
 		if err := cpu.Loop(); err != nil {
 			app.showMessage(err.Error(), MessageError)
 			slog.Error("Error booting CPU", slog.Any("error", err))
 		}
-	}(app.Cpu)
+	}(app.Cpu, autostart)
 
 	rl.InitWindow(int32(app.winW), int32(app.winH), "xip8")
 	defer rl.CloseWindow()
@@ -132,19 +159,17 @@ func (app *ConsoleApp) Run() {
 	}
 }
 
-func (app *ConsoleApp) Load(path string) {
+func (app *App) Load(path string) {
 	program, err := os.ReadFile(path)
 	if err != nil {
 		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
 		return
 	}
 
-	if err = app.Cpu.LoadProgram(program); err != nil {
+	if err := app.Cpu.LoadProgram(program); err != nil {
 		slog.Error("Error loading program", slog.String("path", path), slog.Any("error", err))
 		return
 	}
-
-	// app.Cpu.Memory[0x1FF] = 1
 
 	app.loadedProgramPath = path
 	slog.Info("Program loaded", slog.String("path", path))
@@ -154,20 +179,25 @@ func (app *ConsoleApp) Load(path string) {
 }
 
 // Play implements xip8.Buzzer.
-func (app *ConsoleApp) Play() {
+func (app *App) Play() {
 }
 
 // Stop implements xip8.Buzzer.
-func (app *ConsoleApp) Stop() {
+func (app *App) Stop() {
 }
 
-func (app *ConsoleApp) updateWindowSize() {
-	app.winW = app.Cpu.ScreenSettings.Width * ScreenPixelSize
-	app.winH = app.Cpu.ScreenSettings.Height*ScreenPixelSize + ToolbarHeight + MessageBarHeigh
+func (app *App) updateWindowSize() {
+	app.winW = ScreenWidth
+	app.winH = ScreenHeight + ToolbarHeight + MessageBarHeigh
+	if app.Cpu.ScreenSettings.Width == xip8.SmallScreen.Width {
+		app.pixelScale = ScreenPixelSizeLarge
+	} else {
+		app.pixelScale = ScreenPixelSizeSmall
+	}
 	slog.Info("Updating window size", slog.Int("width", app.winW), slog.Int("height", app.winH))
 }
 
-func (app *ConsoleApp) updateKeyboardLookupMap() {
+func (app *App) updateKeyboardLookupMap() {
 	runeToConsoleKey := xip8.LookupMap(app.keyboardLayout)
 	// app.keyboardMap = map[ScanCode]byte{}
 	for r, k := range runeToConsoleKey {
@@ -175,12 +205,12 @@ func (app *ConsoleApp) updateKeyboardLookupMap() {
 	}
 }
 
-func (app *ConsoleApp) loadStyles() {
+func (app *App) loadStyles() {
 	slog.Info("Loading styles")
 	gui.LoadStyleFromMemory(resources.StyleRgs)
 }
 
-func (app *ConsoleApp) handleFileLoad() {
+func (app *App) handleFileLoad() {
 	if rl.IsFileDropped() {
 		files := rl.LoadDroppedFiles()
 		defer rl.UnloadDroppedFiles()
@@ -191,11 +221,11 @@ func (app *ConsoleApp) handleFileLoad() {
 	}
 }
 
-func (app ConsoleApp) hasProgramLoaded() bool {
+func (app App) hasProgramLoaded() bool {
 	return len(app.loadedProgramPath) > 0
 }
 
-func (app *ConsoleApp) handleActions() {
+func (app *App) handleActions() {
 	if app.startBtn {
 		if app.hasProgramLoaded() {
 			app.Cpu.Start()
@@ -218,7 +248,7 @@ func (app *ConsoleApp) handleActions() {
 	}
 }
 
-func (app *ConsoleApp) handleKeyPress() {
+func (app *App) handleKeyPress() {
 	for scanCode, key := range app.keyboardLookupMap {
 		if rl.IsKeyDown(scanCode) {
 			app.InMemoryKeyboard.State |= (0b1000000000000000 >> key)
@@ -229,7 +259,7 @@ func (app *ConsoleApp) handleKeyPress() {
 	}
 }
 
-func (app *ConsoleApp) updateCpuSpeed() {
+func (app *App) updateCpuSpeed() {
 	app.Cpu.SetSpeedInHz(speedFactorToHz(app.speedFactor))
 }
 
@@ -244,7 +274,7 @@ const (
 	MaxSpeed = float32(xip8.MaxSpeed/5) - 1
 )
 
-func (app *ConsoleApp) drawToolbar() {
+func (app *App) drawToolbar() {
 	rl.DrawRectangle(0, 0, int32(rl.GetScreenWidth()), ToolbarHeight, rl.Gray)
 
 	// if gui.DropdownBox(
@@ -314,24 +344,24 @@ func (app *ConsoleApp) drawToolbar() {
 
 var t int
 
-func (app *ConsoleApp) drawScreen() {
+func (app *App) drawScreen() {
 	for y := 0; y < app.Cpu.ScreenSettings.Height; y++ {
 		for x := 0; x < app.Cpu.ScreenSettings.Width; x++ {
 			t = y*app.Cpu.ScreenSettings.Width + x
 
 			if app.screen[t] > 0 {
 				rl.DrawRectangle(
-					ScreenPositionX+ScreenPixelSize*int32(x),
-					ScreenPositionY+ScreenPixelSize*int32(y),
-					ScreenPixelSize,
-					ScreenPixelSize,
+					ScreenPositionX+app.pixelScale*int32(x),
+					ScreenPositionY+app.pixelScale*int32(y),
+					app.pixelScale,
+					app.pixelScale,
 					ScreenPixelColor)
 			} else {
 				rl.DrawRectangle(
-					ScreenPositionX+ScreenPixelSize*int32(x),
-					ScreenPositionY+ScreenPixelSize*int32(y),
-					ScreenPixelSize,
-					ScreenPixelSize,
+					ScreenPositionX+app.pixelScale*int32(x),
+					ScreenPositionY+app.pixelScale*int32(y),
+					app.pixelScale,
+					app.pixelScale,
 					ScreenBgColor)
 			}
 		}
@@ -355,7 +385,7 @@ func (app *ConsoleApp) showMessage(msg string, mType MessageType) {
 	}
 }
 
-func (app *ConsoleApp) drawMessageBar() {
+func (app *App) drawMessageBar() {
 	rl.DrawRectangle(
 		0,
 		int32(app.winH)-MessageBarHeigh,
