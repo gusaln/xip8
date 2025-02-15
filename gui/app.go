@@ -52,7 +52,7 @@ type App struct {
 	// The underlying console
 	Cpu *xip8.Cpu
 	// Speed factor
-	// Speed in Hz is speedFactor+1 * 5
+	// Speed in Hz is max(1, speedFactor * 10)
 	speedFactor float32
 	// Unpacked screen representation
 	screen     []byte
@@ -75,25 +75,27 @@ type App struct {
 }
 
 func speedFactorToHz(s float32) uint {
-	return uint((s + 1) * 5)
+	return max(1, uint(s)*10)
 }
 
 func hzToSpeedFactor(hz uint) float32 {
-	return float32(hz)/5 - 1
+	return float32(hz / 10)
 }
 
 // AppConfig
 type AppConfig struct {
 	// The initial speed
-	Speed       uint
-	UseDebugger bool
+	Speed          uint
+	UseDebugger    bool
+	CyclesPerFrame uint
 }
 type AppConfigCb func(config *AppConfig)
 
 func NewApp(configs ...AppConfigCb) *App {
 	config := &AppConfig{
-		Speed:       xip8.DefaultSpeed,
-		UseDebugger: false,
+		Speed:          xip8.DefaultSpeed,
+		UseDebugger:    false,
+		CyclesPerFrame: xip8.DefaultCyclesPerFrame,
 	}
 	for _, cb := range configs {
 		cb(config)
@@ -118,6 +120,10 @@ func NewApp(configs ...AppConfigCb) *App {
 	app.updateKeyboardLookupMap()
 	app.updateWindowSize()
 
+	if app.useDebugger {
+		slog.Info("Using debugger")
+	}
+
 	return app
 }
 
@@ -126,9 +132,9 @@ func (app *App) Run(autostart bool) {
 	go func(cpu *xip8.Cpu, autostart bool) {
 		slog.Info("starting CPU loop on pause")
 		cpu.Boot()
-		// if !app.hasProgramLoaded() || !autostart {
-		cpu.Stop()
-		// }
+		if !app.hasProgramLoaded() || !autostart {
+			cpu.Stop()
+		}
 		if err := cpu.Loop(); err != nil {
 			app.showMessage(err.Error(), MessageError)
 			slog.Error("Error booting CPU", slog.Any("error", err))
@@ -152,6 +158,7 @@ func (app *App) Run(autostart bool) {
 
 		// Sections get rendered from bottom to the top because otherwise so that dropdown menus not
 		app.drawMessageBar()
+		app.drawDebugger()
 		app.drawScreen()
 		app.drawToolbar()
 
@@ -194,6 +201,10 @@ func (app *App) updateWindowSize() {
 	} else {
 		app.pixelScale = ScreenPixelSizeSmall
 	}
+
+	if app.useDebugger {
+		app.winH += 2*DebuggerRegisterMargin + 8*DebuggerRegisterHeight
+	}
 	slog.Info("Updating window size", slog.Int("width", app.winW), slog.Int("height", app.winH))
 }
 
@@ -208,6 +219,7 @@ func (app *App) updateKeyboardLookupMap() {
 func (app *App) loadStyles() {
 	slog.Info("Loading styles")
 	gui.LoadStyleFromMemory(resources.StyleRgs)
+	// gui.SetFont(rl.LoadFontFromMemory(".ttf", resources.FiraMonoTtf, 14, resources.FiraMonoCodePoints))
 }
 
 func (app *App) handleFileLoad() {
@@ -270,8 +282,8 @@ func (app *App) updateCpuSpeed() {
 // }
 
 const (
-	MinSpeed = float32(xip8.MinSpeed/5) - 1
-	MaxSpeed = float32(xip8.MaxSpeed/5) - 1
+	minSpeed = 0
+	maxSpeed = 70
 )
 
 func (app *App) drawToolbar() {
@@ -336,8 +348,8 @@ func (app *App) drawToolbar() {
 		rl.NewRectangle(float32(app.winW)-ToolbarGap-150, ToolbarGap, 100, 20),
 		"1 Hz", "700 Hz",
 		app.speedFactor,
-		MinSpeed,
-		MaxSpeed,
+		minSpeed,
+		maxSpeed,
 	)
 
 }
@@ -368,7 +380,89 @@ func (app *App) drawScreen() {
 	}
 }
 
-func (app *ConsoleApp) showMessage(msg string, mType MessageType) {
+const (
+	DebuggerRegisterPosX   = 0
+	DebuggerRegisterPosY   = (ToolbarHeight + ScreenHeight + 1)
+	DebuggerRegisterMargin = 5
+	DebuggerRegisterWidth  = 50
+	DebuggerRegisterHeight = 14
+
+	DebuggerRegisterColGap   = 15
+	DebuggerRegisterCol1PosX = DebuggerRegisterMargin
+	DebuggerRegisterCol1PosY = DebuggerRegisterPosY + DebuggerRegisterMargin
+
+	DebuggerRegisterCol2PosX = DebuggerRegisterCol1PosX + DebuggerRegisterWidth + DebuggerRegisterColGap
+	DebuggerRegisterCol2PosY = DebuggerRegisterPosY + DebuggerRegisterMargin
+
+	DebuggerRegisterCol3PosX = DebuggerRegisterCol2PosX + DebuggerRegisterWidth + DebuggerRegisterColGap
+	DebuggerRegisterCol3PosY = DebuggerRegisterPosY + DebuggerRegisterMargin
+
+	DebuggerRegisterCol4PosX = DebuggerRegisterCol3PosX + 2*DebuggerRegisterWidth + DebuggerRegisterColGap
+	DebuggerRegisterCol4PosY = DebuggerRegisterPosY + DebuggerRegisterMargin
+
+	DebuggerRegisterCol5PosX = DebuggerRegisterCol4PosX + 2*DebuggerRegisterWidth + DebuggerRegisterColGap
+	DebuggerRegisterCol5PosY = DebuggerRegisterPosY + DebuggerRegisterMargin
+)
+
+func (app *App) drawDebugger() {
+	if !app.useDebugger {
+		return
+	}
+
+	for i, vi := range app.Cpu.V[:8] {
+		gui.Label(rl.NewRectangle(
+			DebuggerRegisterCol1PosX, DebuggerRegisterCol1PosY+DebuggerRegisterHeight*float32(i),
+			DebuggerRegisterWidth, DebuggerRegisterHeight),
+			fmt.Sprintf("V%X 0x%02X", i, vi))
+	}
+
+	for i, vi := range app.Cpu.V[8:] {
+		gui.Label(rl.NewRectangle(
+			DebuggerRegisterCol2PosX, DebuggerRegisterCol2PosY+DebuggerRegisterHeight*float32(i),
+			DebuggerRegisterWidth, DebuggerRegisterHeight),
+			fmt.Sprintf("V%X 0x%02X", i+8, vi))
+	}
+
+	gui.Label(rl.NewRectangle(
+		DebuggerRegisterCol3PosX, DebuggerRegisterCol3PosY+DebuggerRegisterHeight*0,
+		DebuggerRegisterWidth*2, DebuggerRegisterHeight),
+		fmt.Sprintf("PC 0x%04X", app.Cpu.Pc))
+
+	gui.Label(rl.NewRectangle(
+		DebuggerRegisterCol3PosX, DebuggerRegisterCol3PosY+DebuggerRegisterHeight*1,
+		DebuggerRegisterWidth*2, DebuggerRegisterHeight),
+		fmt.Sprintf("SP 0x%02X", app.Cpu.Sp))
+
+	gui.Label(rl.NewRectangle(
+		DebuggerRegisterCol3PosX, DebuggerRegisterCol3PosY+DebuggerRegisterHeight*2,
+		DebuggerRegisterWidth*2, DebuggerRegisterHeight),
+		fmt.Sprintf("I 0x%04X", app.Cpu.I))
+
+	gui.Label(rl.NewRectangle(
+		DebuggerRegisterCol3PosX, DebuggerRegisterCol3PosY+DebuggerRegisterHeight*3,
+		DebuggerRegisterWidth, DebuggerRegisterHeight),
+		fmt.Sprintf("DT 0x%02X", app.Cpu.Dt))
+	gui.Label(rl.NewRectangle(
+		DebuggerRegisterCol3PosX+DebuggerRegisterMargin+DebuggerRegisterWidth, DebuggerRegisterCol3PosY+DebuggerRegisterHeight*3,
+		DebuggerRegisterWidth, DebuggerRegisterHeight),
+		fmt.Sprintf("ST 0x%02X", app.Cpu.St))
+
+	for i, si := range app.Cpu.Stack[:8] {
+		gui.Label(rl.NewRectangle(
+			DebuggerRegisterCol4PosX, DebuggerRegisterCol4PosY+DebuggerRegisterHeight*float32(i),
+			DebuggerRegisterWidth*2, DebuggerRegisterHeight),
+			fmt.Sprintf("S[%X] 0x%04X", i, si))
+	}
+
+	for i, si := range app.Cpu.Stack[8:] {
+		gui.Label(rl.NewRectangle(
+			DebuggerRegisterCol5PosX, DebuggerRegisterCol5PosY+DebuggerRegisterHeight*float32(i),
+			DebuggerRegisterWidth*2, DebuggerRegisterHeight),
+			fmt.Sprintf("S[%X] 0x%04X", i+8, si))
+	}
+}
+
+func (app *App) showMessage(msg string, mType MessageType) {
 	app.lastMessage = msg
 	switch mType {
 	case MessageInfo:

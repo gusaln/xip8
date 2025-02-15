@@ -114,6 +114,8 @@ type CpuConfig struct {
 	Keyboard Keyboard
 	// Defaults to DummyBuzzer
 	Buzzer Buzzer
+
+	CyclesPerFrame uint
 }
 type CpuConfigCb func(config *CpuConfig)
 
@@ -125,6 +127,7 @@ func NewCpu(configs ...CpuConfigCb) *Cpu {
 		Display:        NewDummyDisplay(),
 		Keyboard:       NewInMemoryKeyboard(),
 		Buzzer:         NewDummyBuzzer(),
+		CyclesPerFrame: DefaultCyclesPerFrame,
 	}
 	for _, cb := range configs {
 		cb(config)
@@ -143,7 +146,7 @@ func NewCpu(configs ...CpuConfigCb) *Cpu {
 
 		speedInHz:      DefaultSpeed,
 		step:           time.Second / time.Duration(DefaultSpeed),
-		CyclesPerFrame: DefaultCyclesPerFrame,
+		CyclesPerFrame: config.CyclesPerFrame,
 
 		quirks: config.Quirks,
 
@@ -235,7 +238,14 @@ func (cpu *Cpu) LoadProgram(program []byte) error {
 }
 
 func (cpu *Cpu) Reset() {
+	cpu.V = [16]byte{}
+	cpu.I = 0
+	cpu.Dt = 0
+	cpu.St = 0
 	cpu.Pc = startOfProgram
+	cpu.Sp = 0
+	cpu.Stack = [16]uint16{}
+
 	cpu.frames = 0
 	cpu.cycles = 0
 	cpu.waitingForKey = false
