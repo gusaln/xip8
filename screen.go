@@ -19,6 +19,11 @@ var SmallScreen = ScreenSettings{
 	Height: 32,
 }
 
+var BigScreen = ScreenSettings{
+	Width:  128,
+	Height: 64,
+}
+
 func (cpu *Cpu) clearScreen() {
 	cpu.screen = make([]byte, sizeInBytesOfScreen(cpu.ScreenSettings.Width, cpu.ScreenSettings.Height))
 }
@@ -58,7 +63,6 @@ func (cpu *Cpu) displayToScreen(x, y, sprite byte) bool {
 	}
 
 	// Not an aligned position.
-	// @FIXME: This does not wrap correctly when it is at the edge of the screen
 	tOffset := tReal % 8
 
 	t1 := (tReal - tOffset) / 8
